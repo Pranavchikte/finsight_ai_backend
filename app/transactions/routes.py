@@ -7,6 +7,8 @@ from bson.errors import InvalidId
 from app.services.gemini_service import parse_expense_test
 from app.models.transaction import PREDEFINED_CATEGORIES
 
+from .tasks import process_ai_transaction
+
 transactions_bp = Blueprint('transactions_bp', __name__)
 
 @transactions_bp.route('/', methods=['POST'])
@@ -14,62 +16,54 @@ transactions_bp = Blueprint('transactions_bp', __name__)
 def add_transactions():
     current_user_id = get_jwt_identity()
     data = request.get_json()
-    
+
     if not data or 'mode' not in data:
         return jsonify({"error": "Missing mode (manual or ai)"}), 400
-    
+
     mode = data.get('mode')
-    
+
     if mode == 'manual':
         required_fields = ['amount', 'category', 'description']
         if not all(field in data for field in required_fields):
-            return jsonify({"error": "Missing required fields for manual entry"}),400
-        
-        transactions_doc = Transaction.create_transaction(
+            return jsonify({"error": "Missing required fields for manual entry"}), 400
+
+        transaction_doc = Transaction.create_manual_transaction(
             user_id=ObjectId(current_user_id),
             amount=data.get('amount'),
             category=data.get('category'),
-            description=data.get('description'),
-            date=data.get('date')
+            description=data.get('description')
         )
-        
-        if transactions_doc is None:
+
+        if transaction_doc is None:
             return jsonify({"error": "Invalid data provided (e.g., bad category or amount)"}), 400
         
-        result = mongo.db.transactions.insert_one(transactions_doc)
-        transactions_doc['_id'] = str(result.inserted_id)
-        transactions_doc['user_id'] = str(transactions_doc['user_id'])
-        
-        return jsonify(transactions_doc), 201
-    
     elif mode == 'ai':
         text = data.get('text')
         if not text:
             return jsonify({"error": "Missing 'text' for AI mode"}), 400
         
-        parsed_data = parse_expense_test(text)
-        
-        if not parsed_data:
-            return jsonify({"error": "AI could not parse the expense"}), 422
-        
-        transactions_doc = Transaction.create_transaction(
+        transaction_doc = Transaction.create_ai_transaction(
             user_id=ObjectId(current_user_id),
-            amount=parsed_data.get('amount'),
-            category=parsed_data.get('category'),
-            description=parsed_data.get('description')
+            text=text
         )
-        
-        if transactions_doc is None:
-            return jsonify({"error": "AI returned an invalid category"}), 422
-        
-        result = mongo.db.transactions.insert_one(transactions_doc)
-        transactions_doc['_id'] = str(result.inserted_id)
-        transactions_doc['user_id'] = str(transactions_doc['user_id'])
-        
-        return jsonify(transactions_doc), 201
     
     else:
         return jsonify({"error": "Invalid mode specified"}), 400
+
+    result = mongo.db.transactions.insert_one(transaction_doc)
+    inserted_id = result.inserted_id
+
+    if mode == 'ai':
+        process_ai_transaction.delay(str(inserted_id))
+
+    final_doc = mongo.db.transactions.find_one({"_id": inserted_id})
+    final_doc['_id'] = str(final_doc['_id'])
+    final_doc['user_id'] = str(final_doc['user_id'])
+    final_doc['date'] = final_doc['date'].isoformat()  # ✅ ADD THIS LINE
+    
+    status_code = 201 if mode == 'manual' else 202
+    return jsonify(final_doc), status_code
+
     
 @transactions_bp.route('/', methods=['GET'])
 @jwt_required()
@@ -88,6 +82,25 @@ def get_transactions():
         transactions_list.append(transaction)
         
     return jsonify(transactions_list), 200
+
+
+@transactions_bp.route('/<string:transaction_id>', methods=['GET'])
+@jwt_required()
+def get_transaction(transaction_id):
+    current_user_id = get_jwt_identity()
+    try:
+        transaction = mongo.db.transactions.find_one({
+            "_id": ObjectId(transaction_id),
+            "user_id": ObjectId(current_user_id)
+        })
+        if transaction:
+            transaction['_id'] = str(transaction['_id'])
+            transaction['user_id'] = str(transaction['user_id'])
+            return jsonify(transaction), 200
+        else:
+            return jsonify({"error": "Transaction not found"}), 404
+    except InvalidId:
+        return jsonify({"error": "Invalid transaction ID format"}), 400
 
 @transactions_bp.route('/<string:transaction_id>', methods=['DELETE'])
 @jwt_required()
@@ -108,6 +121,32 @@ def delete_transaction(transaction_id):
         
     except InvalidId:
         return jsonify({"error": "Invvalid transactions ID format"}), 400
+    
+    
+@transactions_bp.route('/<string:transaction_id>/status', methods=['GET'])
+@jwt_required()
+def get_transaction_status(transaction_id):
+    
+    current_user_id = get_jwt_identity()
+    
+    try:
+        transaction = mongo.db.transactions.find_one(
+            {
+                "_id": ObjectId(transaction_id), 
+                "user_id": ObjectId(current_user_id)
+            },
+            {"status": 1} 
+        )
+        
+        if transaction:
+            return jsonify({"status": transaction.get("status", "unknown")}), 200
+        else:
+            return jsonify({"error": "Transaction not found"}), 404
+            
+    except InvalidId:
+        return jsonify({"error": "Invalid transaction ID format"}), 400
+
+
     
 @transactions_bp.route('/categories', methods=['GET'])
 def get_categories():

@@ -3,16 +3,23 @@ from flask_pymongo import PyMongo
 from flask_jwt_extended import JWTManager
 from flask_cors import CORS
 from flask_bcrypt import Bcrypt
-from .config import Config
+from config import Config
+from .celery_utils import create_celery_app
 
 mongo = PyMongo()
 jwt = JWTManager()
 bcrypt = Bcrypt()
 cors = CORS()
 
+celery = None
+
 def create_app():
+    global celery
+    
     app = Flask(__name__)
     app.config.from_object(Config)
+    
+    celery = create_celery_app(app)
     
     mongo.init_app(app)
     jwt.init_app(app)
