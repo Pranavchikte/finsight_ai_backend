@@ -1,0 +1,4 @@
+2025-10-18 19:15:45,679 INFO: Finsight AI startup [in /app/app/__init__.py:50]
+2025-10-18 19:15:45,728 INFO: Finsight AI startup [in /app/app/__init__.py:50]
+2025-10-18 19:16:15,118 INFO: AI_TASK_START: Calling Gemini API for transaction 68f3e77f4cbbb157f7daa5f0. [in /app/app/transactions/tasks.py:28]
+2025-10-18 19:16:18,252 INFO: AI_TASK_SUCCESS: Successfully processed transaction 68f3e77f4cbbb157f7daa5f0. [in /app/app/transactions/tasks.py:49]

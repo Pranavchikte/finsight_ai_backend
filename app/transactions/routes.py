@@ -1,13 +1,15 @@
 import json
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from app import mongo
-from app.models.transaction import Transaction
 from bson import ObjectId
 from bson.errors import InvalidId
 from pydantic import ValidationError
+
+from app import mongo
+from app.models.transaction import Transaction
 from .schemas import AddTransactionSchema, PREDEFINED_CATEGORIES
 from .tasks import process_ai_transaction
+from app.utils import success_response, error_response # <-- Import our new helpers
 
 transactions_bp = Blueprint('transactions_bp', __name__)
 
@@ -19,15 +21,13 @@ def add_transactions():
     try:
         data = AddTransactionSchema(**request.get_json())
     except ValidationError as e:
-        # This line is the fix. e.json() returns a JSON string,
-        # and json.loads() converts it into a clean Python dictionary
-        # that jsonify() can handle safely.
         error_details = json.loads(e.json())
-        return jsonify({"error": "Invalid data provided", "details": error_details}), 400
+        return error_response(error_details, 400)
+    except Exception:
+        return error_response("Request must be JSON", 400)
 
     transaction_doc = None
     if data.mode == 'manual':
-        # This is the corrected line
         transaction_doc = Transaction.create_transaction(
             user_id=ObjectId(current_user_id),
             amount=data.amount,
@@ -47,12 +47,13 @@ def add_transactions():
         process_ai_transaction.delay(str(inserted_id))
 
     final_doc = mongo.db.transactions.find_one({"_id": inserted_id})
+    # Convert MongoDB specific types to strings for JSON response
     final_doc['_id'] = str(final_doc['_id'])
     final_doc['user_id'] = str(final_doc['user_id'])
     final_doc['date'] = final_doc['date'].isoformat()
     
     status_code = 201 if data.mode == 'manual' else 202
-    return jsonify(final_doc), status_code
+    return success_response(final_doc, status_code)
 
     
 @transactions_bp.route('/', methods=['GET'])
@@ -71,7 +72,7 @@ def get_transactions():
         transaction['date'] = transaction['date'].isoformat()
         transactions_list.append(transaction)
         
-    return jsonify(transactions_list), 200
+    return success_response(transactions_list)
 
 
 @transactions_bp.route('/<string:transaction_id>', methods=['GET'])
@@ -86,11 +87,12 @@ def get_transaction(transaction_id):
         if transaction:
             transaction['_id'] = str(transaction['_id'])
             transaction['user_id'] = str(transaction['user_id'])
-            return jsonify(transaction), 200
+            transaction['date'] = transaction['date'].isoformat()
+            return success_response(transaction)
         else:
-            return jsonify({"error": "Transaction not found"}), 404
+            return error_response("Transaction not found", 404)
     except InvalidId:
-        return jsonify({"error": "Invalid transaction ID format"}), 400
+        return error_response("Invalid transaction ID format", 400)
 
 @transactions_bp.route('/<string:transaction_id>', methods=['DELETE'])
 @jwt_required()
@@ -105,12 +107,12 @@ def delete_transaction(transaction_id):
         result = mongo.db.transactions.find_one_and_delete(delete_query)
         
         if result:
-            return jsonify({"message": "Transaction deleted successfully"}), 200
+            return success_response({"message": "Transaction deleted successfully"})
         else:
-            return jsonify({"error": "Transaction not found"}), 404
+            return error_response("Transaction not found", 404)
         
     except InvalidId:
-        return jsonify({"error": "Invalid transaction ID format"}), 400
+        return error_response("Invalid transaction ID format", 400)
     
     
 @transactions_bp.route('/<string:transaction_id>/status', methods=['GET'])
@@ -120,22 +122,19 @@ def get_transaction_status(transaction_id):
     
     try:
         transaction = mongo.db.transactions.find_one(
-            {
-                "_id": ObjectId(transaction_id), 
-                "user_id": ObjectId(current_user_id)
-            },
+            {"_id": ObjectId(transaction_id), "user_id": ObjectId(current_user_id)},
             {"status": 1} 
         )
         
         if transaction:
-            return jsonify({"status": transaction.get("status", "unknown")}), 200
+            return success_response({"status": transaction.get("status", "unknown")})
         else:
-            return jsonify({"error": "Transaction not found"}), 404
+            return error_response("Transaction not found", 404)
             
     except InvalidId:
-        return jsonify({"error": "Invalid transaction ID format"}), 400
+        return error_response("Invalid transaction ID format", 400)
 
     
 @transactions_bp.route('/categories', methods=['GET'])
 def get_categories():
-    return jsonify(list(PREDEFINED_CATEGORIES)), 200
+    return success_response(list(PREDEFINED_CATEGORIES))

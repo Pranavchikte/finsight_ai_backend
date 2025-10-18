@@ -1,64 +1,92 @@
-from flask import Blueprint, jsonify, request
-from app import mongo
-from app.models.user import User
-import re
-from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
-from datetime import timedelta
+import json
+from flask import Blueprint, request
+from flask_jwt_extended import (
+    create_access_token, 
+    create_refresh_token, 
+    jwt_required, 
+    get_jwt_identity,
+    get_jwt
+)
 from bson import ObjectId
 from pydantic import ValidationError
-from .schemas import RegisterSchema, LoginSchema
 
+from app import mongo, token_blocklist # <-- Import the blocklist
+from app.models.user import User
+from .schemas import RegisterSchema, LoginSchema
+from app.utils import success_response, error_response
 
 auth_bp = Blueprint('auth_bp', __name__)
 
 @auth_bp.route('/register', methods=['POST'])
 def register():
     try:
-        # Pydantic validates the incoming JSON against our schema.
-        # If it's invalid, it raises a ValidationError.
         data = RegisterSchema(**request.get_json())
     except ValidationError as e:
-        return jsonify({"error": "Invalid data provided", "details": e.errors()}), 400
+        error_details = json.loads(e.json())
+        return error_response(error_details, 400)
     except Exception:
-        return jsonify({"error": "Request must be JSON"}), 400
+        return error_response("Request must be JSON", 400)
 
     if mongo.db.users.find_one({"email": data.email.lower()}):
-        return jsonify({"error": "User with this email already exists"}), 409
+        return error_response("User with this email already exists", 409)
 
     user_doc = User.create_user(email=data.email, password=data.password)
     mongo.db.users.insert_one(user_doc)
     
-    return jsonify({"message": "User registered successfully"}), 201
+    return success_response({"message": "User registered successfully"}, 201)
     
 @auth_bp.route('/login', methods=['POST'])
 def login():
     try:
         data = LoginSchema(**request.get_json())
     except ValidationError as e:
-        return jsonify({"error": "Invalid data provided", "details": e.errors()}), 400
+        error_details = json.loads(e.json())
+        return error_response(error_details, 400)
     except Exception:
-        return jsonify({"error": "Request must be JSON"}), 400
+        return error_response("Request must be JSON", 400)
 
     user = mongo.db.users.find_one({"email": data.email.lower()})
 
     if user and User.check_password(user['password'], data.password):
-        access_token = create_access_token(identity=str(user['_id']), expires_delta=False)
-        return jsonify(access_token=access_token), 200
+        user_id = str(user['_id'])
+        # Generate both an access and a refresh token
+        access_token = create_access_token(identity=user_id)
+        refresh_token = create_refresh_token(identity=user_id)
+        
+        return success_response({
+            "access_token": access_token,
+            "refresh_token": refresh_token
+        })
     
-    return jsonify({"error": "Invalid email or password"}), 401
+    return error_response("Invalid email or password", 401)
 
+# --- NEW ENDPOINT: REFRESH ---
+@auth_bp.route('/refresh', methods=['POST'])
+@jwt_required(refresh=True) # This endpoint requires a valid REFRESH token
+def refresh():
+    current_user_id = get_jwt_identity()
+    new_access_token = create_access_token(identity=current_user_id)
+    return success_response({"access_token": new_access_token})
+
+# --- NEW ENDPOINT: LOGOUT ---
+@auth_bp.route('/logout', methods=['DELETE'])
+@jwt_required() # Can be logged out with either an access or refresh token
+def logout():
+    jti = get_jwt()["jti"] # 'jti' is the unique identifier for a JWT
+    token_blocklist.add(jti)
+    return success_response({"message": "Successfully logged out"})
 
 @auth_bp.route('/profile', methods=['GET'])
-@jwt_required()
+@jwt_required() # This requires a valid ACCESS token
 def get_profile():
     current_user_id = get_jwt_identity()
     user = mongo.db.users.find_one({"_id": ObjectId(current_user_id)})
 
     if not user:
-        return jsonify({"error": "User not found"}), 404
+        return error_response("User not found", 404)
 
-    return jsonify({
+    user_data = {
         "_id": str(user['_id']),
         "email": user['email']
-    }), 200
-    
+    }
+    return success_response(user_data)

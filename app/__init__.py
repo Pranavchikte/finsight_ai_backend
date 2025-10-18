@@ -1,3 +1,6 @@
+import logging
+from logging.handlers import RotatingFileHandler
+import os
 from flask import Flask, jsonify
 from flask_pymongo import PyMongo
 from flask_jwt_extended import JWTManager
@@ -13,11 +16,39 @@ cors = CORS()
 
 celery = None
 
+token_blocklist = set()
+
+@jwt.token_in_blocklist_loader
+def check_if_token_in_blocklist(jwt_header, jwt_payload):
+    jti = jwt_payload["jti"]
+    return jti in token_blocklist
+
 def create_app():
     global celery
     
     app = Flask(__name__)
     app.config.from_object(Config)
+    
+    # --- START LOGGING CONFIGURATION ---
+    if not app.debug and not app.testing:
+        # Create a logs directory if it doesn't exist
+        if not os.path.exists('logs'):
+            os.mkdir('logs')
+        
+        # Set up a rotating file handler
+        file_handler = RotatingFileHandler('logs/app.log', maxBytes=10240, backupCount=10)
+        
+        # Set the log format
+        log_format = '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
+        file_handler.setFormatter(logging.Formatter(log_format))
+        
+        # Set the log level
+        file_handler.setLevel(logging.INFO)
+        app.logger.addHandler(file_handler)
+        
+        app.logger.setLevel(logging.INFO)
+        app.logger.info('Finsight AI startup')
+    # --- END LOGGING CONFIGURATION ---
     
     celery = create_celery_app(app)
     

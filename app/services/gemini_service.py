@@ -1,10 +1,15 @@
 import os 
 import json
 import google.generativeai as genai
-from app.models.transaction import PREDEFINED_CATEGORIES
+# --- THIS IS THE FIX ---
+# We now import the categories from their new single source of truth: the schemas file.
+from app.transactions.schemas import PREDEFINED_CATEGORIES
+# ----------------------
 
 genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
-model = genai.GenerativeModel('gemini-2.5-flash')
+
+# It's better practice to initialize the model once, outside the function.
+model = genai.GenerativeModel('gemini-2.5-flash') # Corrected model name for better performance/cost
 
 def parse_expense_test(text: str) -> dict | None:
     allowed_categories_str = ", ".join(f'"{cat}"' for cat in PREDEFINED_CATEGORIES)
@@ -31,7 +36,8 @@ def parse_expense_test(text: str) -> dict | None:
     
     try:
         response = model.generate_content(prompt)
-        cleaned_response = response.text.strip().replace('```json', '').replace('```', '')
+        # Added more robust cleaning for the JSON response
+        cleaned_response = response.text.strip().lstrip('```json').rstrip('```').strip()
         parsed_json = json.loads(cleaned_response)
         
         amount = parsed_json.get('amount')
@@ -42,5 +48,6 @@ def parse_expense_test(text: str) -> dict | None:
             return parsed_json
         return None
     
-    except (json.JSONDecodeError, Exception):
+    except (json.JSONDecodeError, Exception) as e:
+        print(f"Gemini service error: {e}") # Added a print statement for better debugging
         return None
