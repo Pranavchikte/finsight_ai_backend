@@ -5,60 +5,47 @@ import re
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
 from datetime import timedelta
 from bson import ObjectId
+from pydantic import ValidationError
+from .schemas import RegisterSchema, LoginSchema
 
 
 auth_bp = Blueprint('auth_bp', __name__)
 
 @auth_bp.route('/register', methods=['POST'])
 def register():
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "Invalid JSON"}), 400
-    
-    email = data.get('email')
-    password = data.get('password')
-    
-    if not email or not password:
-        return jsonify({"error": "Email and password are required"}), 400
-    
-    if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
-         return jsonify({"error": "Invalid email format"}), 400
-    
-    if len(password) < 8:
-        return jsonify({"error": "Password must be at least 8 characters long"}), 400
-    
-    if mongo.db.users.find_one({"email": email.lower()}):
-        return jsonify({"error": "User with this email already exists"}), 409
-    
     try:
-        user_doc = User.create_user(email, password)
-        mongo.db.users.insert_one(user_doc)
-        return jsonify({"message": "User registered successfully"}), 201
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        # Pydantic validates the incoming JSON against our schema.
+        # If it's invalid, it raises a ValidationError.
+        data = RegisterSchema(**request.get_json())
+    except ValidationError as e:
+        return jsonify({"error": "Invalid data provided", "details": e.errors()}), 400
+    except Exception:
+        return jsonify({"error": "Request must be JSON"}), 400
+
+    if mongo.db.users.find_one({"email": data.email.lower()}):
+        return jsonify({"error": "User with this email already exists"}), 409
+
+    user_doc = User.create_user(email=data.email, password=data.password)
+    mongo.db.users.insert_one(user_doc)
+    
+    return jsonify({"message": "User registered successfully"}), 201
     
 @auth_bp.route('/login', methods=['POST'])
 def login():
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "Invalid JSON"}), 400
+    try:
+        data = LoginSchema(**request.get_json())
+    except ValidationError as e:
+        return jsonify({"error": "Invalid data provided", "details": e.errors()}), 400
+    except Exception:
+        return jsonify({"error": "Request must be JSON"}), 400
+
+    user = mongo.db.users.find_one({"email": data.email.lower()})
+
+    if user and User.check_password(user['password'], data.password):
+        access_token = create_access_token(identity=str(user['_id']), expires_delta=False)
+        return jsonify(access_token=access_token), 200
     
-    email = data.get('email')
-    password = data.get('password')
-    
-    if not email or not password:
-        return jsonify({"error": "Email and password are required"}), 400
-    
-    user_doc = mongo.db.users.find_one({"email": email.lower()})
-    
-    if not user_doc or not User.check_password(user_doc['password'], password):
-        return jsonify({"error": "Invalid credentials"}), 401
-    
-    identity = str(user_doc['_id'])
-    expires = timedelta(hours=24)
-    access_token = create_access_token(identity=identity, expires_delta=expires)
-    
-    return jsonify(access_token=access_token), 200
+    return jsonify({"error": "Invalid email or password"}), 401
 
 
 @auth_bp.route('/profile', methods=['GET'])

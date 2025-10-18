@@ -33,6 +33,10 @@ def create_app():
         app.register_blueprint(auth_bp, url_prefix='/api/auth')
         app.register_blueprint(transactions_bp, url_prefix='/api/transactions')
         
+        mongo.db.users.create_index("email", unique=True)
+        mongo.db.transactions.create_index("user_id")
+        mongo.db.transactions.create_index("date")
+        
         @app.route('/', methods=['GET'])
         def index():
             return {"api_status": "FinSight AI Backend v1.0 is running"}, 200

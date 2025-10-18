@@ -1,12 +1,12 @@
+import json
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app import mongo
 from app.models.transaction import Transaction
 from bson import ObjectId
 from bson.errors import InvalidId
-from app.services.gemini_service import parse_expense_test
-from app.models.transaction import PREDEFINED_CATEGORIES
-
+from pydantic import ValidationError
+from .schemas import AddTransactionSchema, PREDEFINED_CATEGORIES
 from .tasks import process_ai_transaction
 
 transactions_bp = Blueprint('transactions_bp', __name__)
@@ -15,53 +15,43 @@ transactions_bp = Blueprint('transactions_bp', __name__)
 @jwt_required()
 def add_transactions():
     current_user_id = get_jwt_identity()
-    data = request.get_json()
+    
+    try:
+        data = AddTransactionSchema(**request.get_json())
+    except ValidationError as e:
+        # This line is the fix. e.json() returns a JSON string,
+        # and json.loads() converts it into a clean Python dictionary
+        # that jsonify() can handle safely.
+        error_details = json.loads(e.json())
+        return jsonify({"error": "Invalid data provided", "details": error_details}), 400
 
-    if not data or 'mode' not in data:
-        return jsonify({"error": "Missing mode (manual or ai)"}), 400
-
-    mode = data.get('mode')
-
-    if mode == 'manual':
-        required_fields = ['amount', 'category', 'description']
-        if not all(field in data for field in required_fields):
-            return jsonify({"error": "Missing required fields for manual entry"}), 400
-
-        transaction_doc = Transaction.create_manual_transaction(
+    transaction_doc = None
+    if data.mode == 'manual':
+        # This is the corrected line
+        transaction_doc = Transaction.create_transaction(
             user_id=ObjectId(current_user_id),
-            amount=data.get('amount'),
-            category=data.get('category'),
-            description=data.get('description')
+            amount=data.amount,
+            category=data.category,
+            description=data.description
         )
-
-        if transaction_doc is None:
-            return jsonify({"error": "Invalid data provided (e.g., bad category or amount)"}), 400
-        
-    elif mode == 'ai':
-        text = data.get('text')
-        if not text:
-            return jsonify({"error": "Missing 'text' for AI mode"}), 400
-        
+    elif data.mode == 'ai':
         transaction_doc = Transaction.create_ai_transaction(
             user_id=ObjectId(current_user_id),
-            text=text
+            text=data.text
         )
-    
-    else:
-        return jsonify({"error": "Invalid mode specified"}), 400
 
     result = mongo.db.transactions.insert_one(transaction_doc)
     inserted_id = result.inserted_id
 
-    if mode == 'ai':
+    if data.mode == 'ai':
         process_ai_transaction.delay(str(inserted_id))
 
     final_doc = mongo.db.transactions.find_one({"_id": inserted_id})
     final_doc['_id'] = str(final_doc['_id'])
     final_doc['user_id'] = str(final_doc['user_id'])
-    final_doc['date'] = final_doc['date'].isoformat()  # ✅ ADD THIS LINE
+    final_doc['date'] = final_doc['date'].isoformat()
     
-    status_code = 201 if mode == 'manual' else 202
+    status_code = 201 if data.mode == 'manual' else 202
     return jsonify(final_doc), status_code
 
     
@@ -120,13 +110,12 @@ def delete_transaction(transaction_id):
             return jsonify({"error": "Transaction not found"}), 404
         
     except InvalidId:
-        return jsonify({"error": "Invvalid transactions ID format"}), 400
+        return jsonify({"error": "Invalid transaction ID format"}), 400
     
     
 @transactions_bp.route('/<string:transaction_id>/status', methods=['GET'])
 @jwt_required()
 def get_transaction_status(transaction_id):
-    
     current_user_id = get_jwt_identity()
     
     try:
@@ -146,9 +135,7 @@ def get_transaction_status(transaction_id):
     except InvalidId:
         return jsonify({"error": "Invalid transaction ID format"}), 400
 
-
     
 @transactions_bp.route('/categories', methods=['GET'])
 def get_categories():
-    
     return jsonify(list(PREDEFINED_CATEGORIES)), 200

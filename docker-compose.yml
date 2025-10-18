@@ -1,0 +1,65 @@
+version: '3.8'
+
+services:
+  # MongoDB Service
+  mongo:
+    image: mongo:latest
+    container_name: finsight-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db # Persists data even if the container stops
+    restart: unless-stopped
+
+  # Redis Service
+  redis:
+    image: redis:latest
+    container_name: finsight-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
+  # Flask Backend Service
+  backend:
+    build: . # Build the image from the Dockerfile in the current directory
+    container_name: finsight-backend
+    ports:
+      - "5000:5000"
+    volumes:
+      - .:/app # Mounts your local code into the container for live updates
+    environment:
+      # These values must match the service names defined in this file
+      - MONGO_URI=mongodb://mongo:27017/finsight_db
+      - BROKER_URL=redis://redis:6379/0
+      - RESULT_BACKEND=redis://redis:6379/0
+      # Copy other variables from your .env file
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - FRONTEND_URL=${FRONTEND_URL}
+    depends_on:
+      - mongo
+      - redis
+    restart: unless-stopped
+
+  # Celery Worker Service
+  celery-worker:
+    build: . # Uses the same image as the backend
+    container_name: finsight-celery-worker
+    command: celery -A celery_worker.celery worker --loglevel=info -P solo
+    volumes:
+      - .:/app
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/finsight_db
+      - BROKER_URL=redis://redis:6379/0
+      - RESULT_BACKEND=redis://redis:6379/0
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    depends_on:
+      - mongo
+      - redis
+    restart: unless-stopped
+
+volumes:
+  mongo-data:
+  redis-data:
