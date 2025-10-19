@@ -1,15 +1,11 @@
 import os 
 import json
 import google.generativeai as genai
-# --- THIS IS THE FIX ---
-# We now import the categories from their new single source of truth: the schemas file.
 from app.transactions.schemas import PREDEFINED_CATEGORIES
-# ----------------------
 
 genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
 
-# It's better practice to initialize the model once, outside the function.
-model = genai.GenerativeModel('gemini-2.5-flash') # Corrected model name for better performance/cost
+model = genai.GenerativeModel('gemini-2.5-flash') 
 
 def parse_expense_test(text: str) -> dict | None:
     allowed_categories_str = ", ".join(f'"{cat}"' for cat in PREDEFINED_CATEGORIES)
@@ -36,7 +32,6 @@ def parse_expense_test(text: str) -> dict | None:
     
     try:
         response = model.generate_content(prompt)
-        # Added more robust cleaning for the JSON response
         cleaned_response = response.text.strip().lstrip('```json').rstrip('```').strip()
         parsed_json = json.loads(cleaned_response)
         
@@ -50,4 +45,46 @@ def parse_expense_test(text: str) -> dict | None:
     
     except (json.JSONDecodeError, Exception) as e:
         print(f"Gemini service error: {e}") # Added a print statement for better debugging
+        return None
+
+def generate_spending_summary(spending_data: list) -> str | None:
+    """
+    Generates a brief, insightful summary of spending habits using the Gemini API.
+
+    Args:
+        spending_data: A list of dictionaries, where each dict is 
+                       {'category': 'Some Category', 'total': 123.45}.
+    
+    Returns:
+        A string containing the AI-generated summary, or None on failure.
+    """
+    if not spending_data:
+        return "No spending data available for this period."
+
+    data_json = json.dumps(spending_data, indent=2)
+
+    prompt = f"""
+    You are a friendly and insightful financial assistant called FinSight AI.
+    Your task is to analyze a user's spending data for the past month and provide a brief, helpful summary (around 3-4 sentences).
+
+    Rules:
+    1.  Your tone should be encouraging and helpful, not judgmental.
+    2.  Start with a general observation about their spending.
+    3.  Identify the top 1 or 2 spending categories.
+    4.  Offer one simple, actionable tip for potential savings based on their data.
+    5.  Do not include any introductory or concluding pleasantries like "Hello" or "Let me know...". Just provide the summary.
+
+    Here is the user's spending data by category in JSON format:
+    {data_json}
+
+    Now, generate the summary.
+    """
+    
+    try:
+        response = model.generate_content(prompt)
+        # Add some basic cleaning to the response text
+        summary = response.text.strip().replace('**', '') # Remove markdown bolding
+        return summary
+    except Exception as e:
+        print(f"Gemini summary generation error: {e}")
         return None

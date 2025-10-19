@@ -73,11 +73,13 @@ def create_app():
         from .transactions.routes import transactions_bp
         from .budgets.routes import budgets_bp 
         from .analytics.routes import analytics_bp 
+        from .ai.routes import ai_bp
         
         app.register_blueprint(auth_bp, url_prefix='/api/auth')
         app.register_blueprint(transactions_bp, url_prefix='/api/transactions')
         app.register_blueprint(budgets_bp, url_prefix='/api/budgets')
         app.register_blueprint(analytics_bp, url_prefix='/api/analytics')
+        app.register_blueprint(ai_bp, url_prefix='/api/ai')
         
         
         mongo.db.users.create_index("email", unique=True)

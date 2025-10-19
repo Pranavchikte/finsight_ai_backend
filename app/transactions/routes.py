@@ -1,4 +1,5 @@
 import json
+import re
 from flask import Blueprint, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from bson import ObjectId
@@ -61,9 +62,25 @@ def add_transactions():
 def get_transactions():
     current_user_id = get_jwt_identity()
     
-    transactions_cursor = mongo.db.transactions.find({
-        "user_id": ObjectId(current_user_id)
-    }).sort("date", -1)
+    # --- START OF CHANGES ---
+    # Get filter parameters from the request's query string
+    search_query = request.args.get('search')
+    category_filter = request.args.get('category')
+
+    # Start building the query with the mandatory user_id
+    query = {"user_id": ObjectId(current_user_id)}
+
+    # If a search term is provided, add a case-insensitive regex search on the description
+    if search_query:
+        query["description"] = {"$regex": re.compile(search_query, re.IGNORECASE)}
+
+    # If a category is provided, add it to the query
+    if category_filter:
+        query["category"] = category_filter
+    # --- END OF CHANGES ---
+    
+    # The rest of the function remains the same, but uses the new dynamic query
+    transactions_cursor = mongo.db.transactions.find(query).sort("date", -1)
     
     transactions_list = []
     for transaction in transactions_cursor:
