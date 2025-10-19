@@ -4,7 +4,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from bson import ObjectId
 from bson.errors import InvalidId
 from pydantic import ValidationError
-
+from datetime import timezone, datetime
 from app import mongo
 from app.models.transaction import Transaction
 from .schemas import AddTransactionSchema, PREDEFINED_CATEGORIES
@@ -115,6 +115,53 @@ def delete_transaction(transaction_id):
         return error_response("Invalid transaction ID format", 400)
     
     
+@transactions_bp.route('/summary', methods=['GET'])
+@jwt_required()
+def get_transaction_summary():
+    """
+    Calculates and returns a summary of transactions for the current user,
+    focusing on the current month's total expenses.
+    """
+    current_user_id = get_jwt_identity()
+    user_object_id = ObjectId(current_user_id)
+
+    # Get the start and end of the current month
+    now = datetime.now(timezone.utc)
+    start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    
+    # Aggregation pipeline to calculate total spend
+    pipeline = [
+        {
+            "$match": {
+                "user_id": user_object_id,
+                "date": {"$gte": start_of_month},
+                "status": "completed" # Only count completed transactions
+            }
+        },
+        {
+            "$group": {
+                "_id": None, # Group all matched documents together
+                "total_spend": {"$sum": "$amount"}
+            }
+        }
+    ]
+
+    result = list(mongo.db.transactions.aggregate(pipeline))
+
+    # If there are transactions, the result will be a list with one document
+    if result:
+        total_spend = result[0]['total_spend']
+    else:
+        # If there are no transactions, the result is empty
+        total_spend = 0
+        
+    summary = {
+        "current_month_spend": total_spend
+    }
+    
+    return success_response(summary)
+    
+    
 @transactions_bp.route('/<string:transaction_id>/status', methods=['GET'])
 @jwt_required()
 def get_transaction_status(transaction_id):
@@ -138,3 +185,4 @@ def get_transaction_status(transaction_id):
 @transactions_bp.route('/categories', methods=['GET'])
 def get_categories():
     return success_response(list(PREDEFINED_CATEGORIES))
+

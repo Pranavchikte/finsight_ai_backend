@@ -103,17 +103,50 @@ def logout():
         current_app.logger.error(f"Redis connection error on logout: {e}")
         return error_response("Could not revoke token due to a server issue.", 500)
 
-@auth_bp.route('/profile', methods=['GET'])
-@jwt_required() # This requires a valid ACCESS token
-def get_profile():
+@auth_bp.route('/profile', methods=['GET', 'POST'])
+@jwt_required()
+def profile():
+    """
+    GET: Fetches the current user's profile information.
+    POST: Updates the current user's profile information (e.g., income).
+    """
     current_user_id = get_jwt_identity()
-    user = mongo.db.users.find_one({"_id": ObjectId(current_user_id)})
+    user_object_id = ObjectId(current_user_id)
 
-    if not user:
+    # --- HANDLE POST REQUEST TO UPDATE PROFILE ---
+    if request.method == 'POST':
+        data = request.get_json()
+        income = data.get('income')
+
+        if income is None:
+            return error_response("Income is a required field.", 400)
+        
+        try:
+            # Ensure income is a valid positive number
+            income = float(income)
+            if income < 0:
+                raise ValueError
+        except (ValueError, TypeError):
+            return error_response("Income must be a valid positive number.", 400)
+
+        mongo.db.users.update_one(
+            {"_id": user_object_id},
+            {"$set": {"income": income}}
+        )
+        
+        updated_user = mongo.db.users.find_one({"_id": user_object_id})
+        updated_user['_id'] = str(updated_user['_id']) # Convert ObjectId for JSON response
+        
+        return success_response(updated_user)
+
+    # --- HANDLE GET REQUEST TO FETCH PROFILE ---
+    user = mongo.db.users.find_one({"_id": user_object_id}, {"password": 0})
+    if user:
+        user['_id'] = str(user['_id'])
+        # Ensure the income field exists, default to 0 if not set
+        if 'income' not in user:
+            user['income'] = 0
+            
+        return success_response(user)
+    else:
         return error_response("User not found", 404)
-
-    user_data = {
-        "_id": str(user['_id']),
-        "email": user['email']
-    }
-    return success_response(user_data)
