@@ -1,3 +1,4 @@
+import redis
 import json
 from flask import Blueprint, request
 from flask_jwt_extended import (
@@ -8,6 +9,8 @@ from flask_jwt_extended import (
     get_jwt
 )
 from bson import ObjectId
+from datetime import datetime, timezone
+from flask import current_app
 from pydantic import ValidationError
 
 from app import mongo, token_blocklist # <-- Import the blocklist
@@ -70,11 +73,35 @@ def refresh():
 
 # --- NEW ENDPOINT: LOGOUT ---
 @auth_bp.route('/logout', methods=['DELETE'])
-@jwt_required() # Can be logged out with either an access or refresh token
+@jwt_required(verify_type=False) 
 def logout():
-    jti = get_jwt()["jti"] # 'jti' is the unique identifier for a JWT
-    token_blocklist.add(jti)
-    return success_response({"message": "Successfully logged out"})
+    """
+    Revokes the current user's token by adding its JTI to the Redis blocklist.
+    The token will be blocked for its remaining lifetime.
+    """
+    token = get_jwt()
+    jti = token["jti"]
+    token_type = token["type"]
+    
+    # Calculate the remaining time until the token expires
+    exp_timestamp = token["exp"]
+    now = datetime.now(timezone.utc)
+    time_to_live = round(exp_timestamp - now.timestamp())
+
+    try:
+        # Connect to Redis and add the token's JTI to the blocklist
+        redis_conn = redis.from_url(current_app.config['BROKER_URL'])
+        
+        # Using setex to store the JTI with an expiration time (in seconds)
+        # We only store it if it has a positive time to live
+        if time_to_live > 0:
+            redis_conn.setex(f"jti:{jti}", time_to_live, "blocked")
+
+        return success_response({"message": f"{token_type.capitalize()} token successfully revoked."})
+        
+    except Exception as e:
+        current_app.logger.error(f"Redis connection error on logout: {e}")
+        return error_response("Could not revoke token due to a server issue.", 500)
 
 @auth_bp.route('/profile', methods=['GET'])
 @jwt_required() # This requires a valid ACCESS token

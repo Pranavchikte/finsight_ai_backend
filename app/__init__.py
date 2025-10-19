@@ -1,7 +1,8 @@
+import os
+import redis
 import logging
 from logging.handlers import RotatingFileHandler
-import os
-from flask import Flask, jsonify
+from flask import Flask, jsonify, current_app
 from flask_pymongo import PyMongo
 from flask_jwt_extended import JWTManager
 from flask_cors import CORS
@@ -20,8 +21,18 @@ token_blocklist = set()
 
 @jwt.token_in_blocklist_loader
 def check_if_token_in_blocklist(jwt_header, jwt_payload):
+    
     jti = jwt_payload["jti"]
-    return jti in token_blocklist
+    try:
+        redis_conn = redis.from_url(current_app.config['BROKER_URL'])
+        token_is_blocked = redis_conn.get(f"jti:{jti}")
+        return token_is_blocked is not None
+    except Exception as e:
+        # If redis is down, we can log the error but should fail open
+        # (i.e., assume token is not blocked) to avoid locking everyone out.
+        # For higher security, you could fail closed (return True).
+        current_app.logger.error(f"Redis connection error on token check: {e}")
+        return False
 
 def create_app():
     global celery
