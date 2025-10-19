@@ -71,13 +71,17 @@ def create_app():
     with app.app_context():
         from .auth.routes import auth_bp
         from .transactions.routes import transactions_bp
+        from .budgets.routes import budgets_bp 
         
         app.register_blueprint(auth_bp, url_prefix='/api/auth')
         app.register_blueprint(transactions_bp, url_prefix='/api/transactions')
+        app.register_blueprint(budgets_bp, url_prefix='/api/budgets')
+        
         
         mongo.db.users.create_index("email", unique=True)
         mongo.db.transactions.create_index("user_id")
         mongo.db.transactions.create_index("date")
+        mongo.db.budgets.create_index([("user_id", 1), ("month", 1), ("year", 1)])
         
         @app.route('/', methods=['GET'])
         def index():

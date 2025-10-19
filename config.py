@@ -16,6 +16,6 @@ class Config:
     JWT_BLACKLIST_TOKEN_CHECKS = ["access", "refresh"]
     
     
-    broker_url = os.environ.get('BROKER_URL', 'redis://redis:6379/0')
-    result_backend = os.environ.get('RESULT_BACKEND', 'redis://redis:6379/0')
-    broker_connection_retry_on_startup = True
+    BROKER_URL = os.environ.get('BROKER_URL', 'redis://redis:6379/0')
+    RESULT_BACKEND = os.environ.get('RESULT_BACKEND', 'redis://redis:6379/0')
+    BROKER_CONNECTION_RETRY_ON_STARTUP = True
