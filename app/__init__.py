@@ -13,24 +13,19 @@ from .celery_utils import create_celery_app
 mongo = PyMongo()
 jwt = JWTManager()
 bcrypt = Bcrypt()
+# Initialize CORS here, but configure it inside create_app
 cors = CORS()
 
 celery = None
 
-token_blocklist = set()
-
 @jwt.token_in_blocklist_loader
 def check_if_token_in_blocklist(jwt_header, jwt_payload):
-    
     jti = jwt_payload["jti"]
     try:
         redis_conn = redis.from_url(current_app.config['BROKER_URL'])
         token_is_blocked = redis_conn.get(f"jti:{jti}")
         return token_is_blocked is not None
     except Exception as e:
-        # If redis is down, we can log the error but should fail open
-        # (i.e., assume token is not blocked) to avoid locking everyone out.
-        # For higher security, you could fail closed (return True).
         current_app.logger.error(f"Redis connection error on token check: {e}")
         return False
 
@@ -40,34 +35,24 @@ def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
     
-    # --- START LOGGING CONFIGURATION ---
     if not app.debug and not app.testing:
-        # Create a logs directory if it doesn't exist
         if not os.path.exists('logs'):
             os.mkdir('logs')
-        
-        # Set up a rotating file handler
         file_handler = RotatingFileHandler('logs/app.log', maxBytes=10240, backupCount=10)
-        
-        # Set the log format
         log_format = '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
         file_handler.setFormatter(logging.Formatter(log_format))
-        
-        # Set the log level
         file_handler.setLevel(logging.INFO)
         app.logger.addHandler(file_handler)
-        
         app.logger.setLevel(logging.INFO)
         app.logger.info('Finsight AI startup')
-    # --- END LOGGING CONFIGURATION ---
     
     celery = create_celery_app(app)
     
     mongo.init_app(app)
     jwt.init_app(app)
     bcrypt.init_app(app)
-    cors.init_app(app, resources={r"/api/*":{"origins": app.config.get("FRONTEND_URL")}})
-    
+    # The global cors.init_app is removed from here
+
     with app.app_context():
         from .auth.routes import auth_bp
         from .transactions.routes import transactions_bp
@@ -75,19 +60,20 @@ def create_app():
         from .analytics.routes import analytics_bp 
         from .ai.routes import ai_bp
         
+        # --- FIX: Apply CORS to each blueprint individually ---
         frontend_url = app.config.get("FRONTEND_URL")
         CORS(auth_bp, origins=frontend_url)
         CORS(transactions_bp, origins=frontend_url)
         CORS(budgets_bp, origins=frontend_url)
         CORS(analytics_bp, origins=frontend_url)
         CORS(ai_bp, origins=frontend_url)
+        # ----------------------------------------------------
         
         app.register_blueprint(auth_bp, url_prefix='/api/auth')
         app.register_blueprint(transactions_bp, url_prefix='/api/transactions')
         app.register_blueprint(budgets_bp, url_prefix='/api/budgets')
         app.register_blueprint(analytics_bp, url_prefix='/api/analytics')
         app.register_blueprint(ai_bp, url_prefix='/api/ai')
-        
         
         mongo.db.users.create_index("email", unique=True)
         mongo.db.transactions.create_index("user_id")
@@ -96,7 +82,7 @@ def create_app():
         
         @app.route('/', methods=['GET'])
         def index():
-            return {"api_status": "FinSight AI Backend v1.0 is running"}, 200
+            return {"api_status": "FinSight AI Backend v2.0 is running"}, 200
         
         @app.route('/health', methods=['GET'])
         def health_check():
