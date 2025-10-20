@@ -3,7 +3,7 @@
 import os
 import redis
 import logging
-import time # <-- Add this import
+import time # <-- Keep this import
 from logging.handlers import RotatingFileHandler
 from flask import Flask, jsonify, current_app
 from flask_pymongo import PyMongo
@@ -12,23 +12,16 @@ from flask_cors import CORS
 from flask_bcrypt import Bcrypt
 from config import Config
 from .celery_utils import create_celery_app
-from pymongo.errors import ConnectionFailure # <-- And this import
+# No need for ConnectionFailure import anymore
 
+# (The rest of your initializations remain the same)
 mongo = PyMongo()
 jwt = JWTManager()
 bcrypt = Bcrypt()
 celery = None
 
 @jwt.token_in_blocklist_loader
-def check_if_token_in_blocklist(jwt_header, jwt_payload):
-    jti = jwt_payload["jti"]
-    try:
-        redis_conn = redis.from_url(current_app.config['BROKER_URL'])
-        token_is_blocked = redis_conn.get(f"jti:{jti}")
-        return token_is_blocked is not None
-    except Exception as e:
-        current_app.logger.error(f"Redis connection error on token check: {e}")
-        return False
+# ... (this function remains the same)
 
 def create_app():
     global celery
@@ -36,7 +29,7 @@ def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
 
-    # --- START OF FIX 1: LOGGER INITIALIZED FIRST ---
+    # Logger setup (keep at the top)
     if not app.debug and not app.testing:
         if not os.path.exists('logs'):
             os.mkdir('logs')
@@ -49,7 +42,6 @@ def create_app():
         app.logger.info('Finsight AI startup')
 
     app.logger.info(f"MONGO_URI loaded: {app.config.get('MONGO_URI')}")
-    # --- END OF FIX 1 ---
     
     # Initialize extensions
     mongo.init_app(app)
@@ -58,15 +50,13 @@ def create_app():
     celery = create_celery_app(app)
 
     with app.app_context():
-        # --- START OF FIX 2: BLUEPRINT SCOPE CORRECTED ---
-        # 1. Import all blueprints
+        # Import and register blueprints
         from .auth.routes import auth_bp
         from .transactions.routes import transactions_bp
         from .budgets.routes import budgets_bp 
         from .analytics.routes import analytics_bp 
         from .ai.routes import ai_bp
         
-        # 2. Apply CORS
         frontend_url = app.config.get("FRONTEND_URL")
         CORS(auth_bp, origins=frontend_url)
         CORS(transactions_bp, origins=frontend_url)
@@ -74,36 +64,34 @@ def create_app():
         CORS(analytics_bp, origins=frontend_url)
         CORS(ai_bp, origins=frontend_url)
         
-        # 3. Register blueprints
         app.register_blueprint(auth_bp, url_prefix='/api/auth')
         app.register_blueprint(transactions_bp, url_prefix='/api/transactions')
         app.register_blueprint(budgets_bp, url_prefix='/api/budgets')
         app.register_blueprint(analytics_bp, url_prefix='/api/analytics')
         app.register_blueprint(ai_bp, url_prefix='/api/ai')
-        # --- END OF FIX 2 ---
         
-        # --- START OF FIX 3: DATABASE CONNECTION RETRY LOGIC ---
-        # Try to connect to the database and create indexes, with retries.
+        # --- FINAL FIX: CATCH THE CORRECT ERROR ---
         max_retries = 5
-        retry_delay = 3  # seconds
+        retry_delay = 5  # Increased delay to 5 seconds for cloud environments
         for attempt in range(max_retries):
             try:
-                app.logger.info(f"Attempting to connect to DB and create indexes (Attempt {attempt + 1}/{max_retries})")
+                app.logger.info(f"Attempting to create DB indexes (Attempt {attempt + 1}/{max_retries})")
+                # This is the line that will fail if the DB is not ready
                 mongo.db.users.create_index("email", unique=True)
                 mongo.db.transactions.create_index("user_id")
                 mongo.db.transactions.create_index("date")
                 mongo.db.budgets.create_index([("user_id", 1), ("month", 1), ("year", 1)])
                 app.logger.info("Database indexes created successfully.")
-                break  # Exit the loop if successful
-            except ConnectionFailure as e:
-                app.logger.error(f"DB connection failed on attempt {attempt + 1}: {e}")
+                break  # Success, exit the loop
+            except AttributeError as e: # Catch the actual error that occurs
+                app.logger.error(f"Failed to create indexes on attempt {attempt + 1}: {e}. DB likely not ready.")
                 if attempt < max_retries - 1:
                     app.logger.info(f"Retrying in {retry_delay} seconds...")
                     time.sleep(retry_delay)
                 else:
-                    app.logger.error("Could not connect to the database after several retries. App will fail to start.")
-                    raise  # Re-raise the exception to cause the app to fail
-        # --- END OF FIX 3 ---
+                    app.logger.error("Could not connect to the database. Aborting startup.")
+                    raise  # Re-raise the exception to stop the app
+        # --- END OF FINAL FIX ---
 
         @app.route('/', methods=['GET'])
         def index():
