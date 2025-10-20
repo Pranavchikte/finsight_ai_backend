@@ -75,6 +75,13 @@ def create_app():
         from .analytics.routes import analytics_bp 
         from .ai.routes import ai_bp
         
+        frontend_url = app.config.get("FRONTEND_URL")
+        CORS(auth_bp, origins=frontend_url)
+        CORS(transactions_bp, origins=frontend_url)
+        CORS(budgets_bp, origins=frontend_url)
+        CORS(analytics_bp, origins=frontend_url)
+        CORS(ai_bp, origins=frontend_url)
+        
         app.register_blueprint(auth_bp, url_prefix='/api/auth')
         app.register_blueprint(transactions_bp, url_prefix='/api/transactions')
         app.register_blueprint(budgets_bp, url_prefix='/api/budgets')
