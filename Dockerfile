@@ -18,4 +18,4 @@ COPY . .
 EXPOSE 5000
 
 # Define the command to run your app using Gunicorn
-CMD ["gunicorn", "run:app", "--bind", "0.0.0.0:5000"]
+CMD gunicorn run:app --bind 0.0.0.0:$PORT
