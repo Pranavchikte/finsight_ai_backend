@@ -32,6 +32,8 @@ def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
     
+    app.logger.info(f"MONGO_URI loaded: {app.config.get('MONGO_URI')}")
+    
     # Initialize extensions
     mongo.init_app(app)
     jwt.init_app(app)
