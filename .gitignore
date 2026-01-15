@@ -2,5 +2,7 @@ __pycache__/
 *.pyc
 .env
 venv/
+.env.local
+.env.production
 .pytest_cache/
 logs/

@@ -1,8 +1,13 @@
 import os
 from datetime import timedelta
+from dotenv import load_dotenv
 
-# The `load_dotenv()` call has been removed.
-# The container will now only use environment variables provided by Railway.
+# Load environment-specific .env file
+env = os.getenv('FLASK_ENV', 'development')
+if env == 'production':
+    load_dotenv('.env.production')
+else:
+    load_dotenv('.env.local')
 
 class Config:
     MONGO_URI = os.environ.get('MONGO_URI')
