@@ -58,12 +58,17 @@ def create_app():
         from .analytics.routes import analytics_bp 
         from .ai.routes import ai_bp
         
-        frontend_url = app.config.get("FRONTEND_URL")
-        CORS(auth_bp, origins=frontend_url)
-        CORS(transactions_bp, origins=frontend_url)
-        CORS(budgets_bp, origins=frontend_url)
-        CORS(analytics_bp, origins=frontend_url)
-        CORS(ai_bp, origins=frontend_url)
+        # Configure CORS for all blueprints
+        allowed_origins = [
+            "https://www.finsightfinance.me",
+            "https://finsightfinance.me",
+            "http://localhost:3000"  # For local development
+        ]
+        CORS(auth_bp, origins=allowed_origins, supports_credentials=True)
+        CORS(transactions_bp, origins=allowed_origins, supports_credentials=True)
+        CORS(budgets_bp, origins=allowed_origins, supports_credentials=True)
+        CORS(analytics_bp, origins=allowed_origins, supports_credentials=True)
+        CORS(ai_bp, origins=allowed_origins, supports_credentials=True)
         
         # Register blueprints
         app.register_blueprint(auth_bp, url_prefix='/api/auth')
