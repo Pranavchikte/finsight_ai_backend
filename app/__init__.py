@@ -7,13 +7,16 @@ from flask_pymongo import PyMongo
 from flask_jwt_extended import JWTManager
 from flask_cors import CORS
 from flask_bcrypt import Bcrypt
+from flask_mail import Mail
 from config import Config
 from .celery_utils import create_celery_app
+
 
 # Initialize extensions globally, but without app context yet
 mongo = PyMongo()
 jwt = JWTManager()
 bcrypt = Bcrypt()
+mail = Mail()  
 celery = None
 
 # --- FIX 1: Define the blocklist checker function WITHOUT the decorator ---
@@ -44,6 +47,7 @@ def create_app():
     mongo.init_app(app)
     jwt.init_app(app)
     bcrypt.init_app(app)
+    mail.init_app(app)  
     celery = create_celery_app(app)
 
     # --- FIX 2: Register the blocklist loader AFTER jwt.init_app() ---
