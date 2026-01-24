@@ -198,6 +198,93 @@ def get_transaction_status(transaction_id):
     except InvalidId:
         return error_response("Invalid transaction ID format", 400)
 
+
+@transactions_bp.route('/history', methods=['GET'])
+@jwt_required()
+def get_transaction_history():
+    """
+    Returns transactions grouped by date for easy history viewing.
+    Supports optional date range filtering.
+    """
+    current_user_id = get_jwt_identity()
+    user_object_id = ObjectId(current_user_id)
+    
+    # Optional date range filters
+    start_date_str = request.args.get('start_date')
+    end_date_str = request.args.get('end_date')
+    
+    # Build the match query
+    match_query = {
+        "user_id": user_object_id,
+        "status": "completed"
+    }
+    
+    # Add date filters if provided
+    if start_date_str or end_date_str:
+        date_filter = {}
+        if start_date_str:
+            try:
+                start_date = datetime.fromisoformat(start_date_str).replace(tzinfo=timezone.utc)
+                date_filter["$gte"] = start_date
+            except ValueError:
+                return error_response("Invalid start_date format. Use ISO 8601.", 400)
+        
+        if end_date_str:
+            try:
+                end_date = datetime.fromisoformat(end_date_str).replace(tzinfo=timezone.utc)
+                date_filter["$lte"] = end_date
+            except ValueError:
+                return error_response("Invalid end_date format. Use ISO 8601.", 400)
+        
+        if date_filter:
+            match_query["date"] = date_filter
+    
+    # Aggregation pipeline to group by date
+    pipeline = [
+        {"$match": match_query},
+        {"$sort": {"date": -1}},
+        {
+            "$group": {
+                "_id": {
+                    "$dateToString": {
+                        "format": "%Y-%m-%d",
+                        "date": "$date"
+                    }
+                },
+                "total_spend": {"$sum": "$amount"},
+                "transaction_count": {"$sum": 1},
+                "transactions": {
+                    "$push": {
+                        "_id": {"$toString": "$_id"},
+                        "amount": "$amount",
+                        "category": "$category",
+                        "description": "$description",
+                        "date": "$date"
+                    }
+                }
+            }
+        },
+        {
+            "$project": {
+                "date": "$_id",
+                "total_spend": 1,
+                "transaction_count": 1,
+                "transactions": 1,
+                "_id": 0
+            }
+        },
+        {"$sort": {"date": -1}}
+    ]
+    
+    result = list(mongo.db.transactions.aggregate(pipeline))
+    
+    # Format the transactions' dates to ISO format
+    for day_group in result:
+        for transaction in day_group["transactions"]:
+            transaction["date"] = transaction["date"].isoformat()
+    
+    return success_response(result)
+
     
 @transactions_bp.route('/categories', methods=['GET'])
 def get_categories():
