@@ -62,25 +62,44 @@ def add_transactions():
 def get_transactions():
     current_user_id = get_jwt_identity()
     
-    # --- START OF CHANGES ---
-    # Get filter parameters from the request's query string
+    # Get filter parameters
     search_query = request.args.get('search')
     category_filter = request.args.get('category')
+    min_amount = request.args.get('min_amount')
+    max_amount = request.args.get('max_amount')
+    sort_by = request.args.get('sort_by', 'date')
+    sort_order = request.args.get('sort_order', 'desc')
 
-    # Start building the query with the mandatory user_id
+    # Build query
     query = {"user_id": ObjectId(current_user_id)}
 
-    # If a search term is provided, add a case-insensitive regex search on the description
     if search_query:
         query["description"] = {"$regex": re.compile(search_query, re.IGNORECASE)}
 
-    # If a category is provided, add it to the query
     if category_filter:
         query["category"] = category_filter
-    # --- END OF CHANGES ---
     
-    # The rest of the function remains the same, but uses the new dynamic query
-    transactions_cursor = mongo.db.transactions.find(query).sort("date", -1)
+    # Add amount filtering
+    if min_amount or max_amount:
+        amount_filter = {}
+        if min_amount:
+            try:
+                amount_filter["$gte"] = float(min_amount)
+            except ValueError:
+                return error_response("Invalid min_amount format", 400)
+        if max_amount:
+            try:
+                amount_filter["$lte"] = float(max_amount)
+            except ValueError:
+                return error_response("Invalid max_amount format", 400)
+        if amount_filter:
+            query["amount"] = amount_filter
+    
+    # Sorting
+    sort_direction = -1 if sort_order == 'desc' else 1
+    sort_field = sort_by if sort_by in ['date', 'amount'] else 'date'
+    
+    transactions_cursor = mongo.db.transactions.find(query).sort(sort_field, sort_direction)
     
     transactions_list = []
     for transaction in transactions_cursor:
@@ -90,7 +109,6 @@ def get_transactions():
         transactions_list.append(transaction)
         
     return success_response(transactions_list)
-
 
 @transactions_bp.route('/<string:transaction_id>', methods=['GET'])
 @jwt_required()
