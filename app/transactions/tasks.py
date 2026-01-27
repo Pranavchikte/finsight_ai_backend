@@ -11,7 +11,7 @@ def process_ai_transaction(transaction_id: str):
     Celery task to process a transaction using the Gemini AI service.
     Logs the outcome of the operation.
     """
-    logger = current_app.logger  # Get the configured Flask logger
+    logger = current_app.logger
 
     try:
         transaction = mongo.db.transactions.find_one({"_id": ObjectId(transaction_id)})
@@ -21,18 +21,38 @@ def process_ai_transaction(transaction_id: str):
 
         raw_text = transaction.get("raw_text")
         if not raw_text:
-            # This is a critical error, so we log it as such
             logger.error(f"AI_TASK_FAIL: Transaction {transaction_id} is missing raw_text for AI processing.")
             raise ValueError("Transaction is missing raw_text for AI processing.")
 
-        # Log that we are starting the API call
         logger.info(f"AI_TASK_START: Calling Gemini API for transaction {transaction_id}.")
-        parsed_data = parse_expense_test(raw_text)
-
-        if not parsed_data:
+        
+        # ADDED: Try-catch to capture detailed Gemini errors (FIX #29)
+        try:
+            parsed_data = parse_expense_test(raw_text)
+        except Exception as gemini_error:
+            # ADDED: Store detailed Gemini error (FIX #29)
+            error_message = str(gemini_error)
+            logger.error(f"AI_TASK_GEMINI_ERROR: Gemini API failed for transaction {transaction_id}. Error: {error_message}")
             mongo.db.transactions.update_one(
                 {"_id": ObjectId(transaction_id)},
-                {"$set": {"status": "failed", "failure_reason": "AI could not parse the expense."}}
+                {"$set": {
+                    "status": "failed",
+                    "failure_reason": "AI parsing failed",
+                    "error_details": error_message[:500]  # Store first 500 chars of error
+                }}
+            )
+            return
+
+        if not parsed_data:
+            # ADDED: More specific error message (FIX #29)
+            error_msg = "AI could not extract amount, category, or description from the text"
+            mongo.db.transactions.update_one(
+                {"_id": ObjectId(transaction_id)},
+                {"$set": {
+                    "status": "failed",
+                    "failure_reason": error_msg,
+                    "error_details": f"Input text: {raw_text[:100]}..."
+                }}
             )
             logger.warning(f"AI_TASK_FAIL: Gemini could not parse text for transaction {transaction_id}.")
             return
@@ -50,11 +70,16 @@ def process_ai_transaction(transaction_id: str):
         logger.info(f"AI_TASK_SUCCESS: Successfully processed transaction {transaction_id}.")
 
     except Exception as e:
-        # Catch any unexpected error and log it
+        # ADDED: Capture and store unexpected errors with details (FIX #29)
+        error_message = str(e)
         logger.error(f"AI_TASK_CRITICAL_FAIL: An unexpected error occurred for transaction {transaction_id}: {e}", exc_info=True)
         mongo.db.transactions.update_one(
             {"_id": ObjectId(transaction_id)},
-            {"$set": {"status": "failed", "failure_reason": "An unexpected server error occurred."}}
+            {"$set": {
+                "status": "failed",
+                "failure_reason": "Unexpected server error",
+                "error_details": error_message[:500]
+            }}
         )
         
 @celery.task
@@ -113,5 +138,4 @@ def get_ai_summary_task(user_id_str: str):
 
     except Exception as e:
         logger.error(f"AI_SUMMARY_FAIL: Failed to generate summary for user {user_id_str}. Error: {e}")
-        # This will mark the Celery task as failed
         raise
