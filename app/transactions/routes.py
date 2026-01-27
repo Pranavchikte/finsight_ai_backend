@@ -117,7 +117,14 @@ def get_transactions():
     sort_direction = -1 if sort_order == 'desc' else 1
     sort_field = sort_by if sort_by in ['date', 'amount'] else 'date'
     
-    transactions_cursor = mongo.db.transactions.find(query).sort(sort_field, sort_direction)
+    # FIX #15: Add pagination
+    page = request.args.get('page', 1, type=int)
+    limit = request.args.get('limit', 50, type=int)
+    skip = (page - 1) * limit
+    limit = min(limit, 100)
+
+    total_count = mongo.db.transactions.count_documents(query)
+    transactions_cursor = mongo.db.transactions.find(query).sort(sort_field, sort_direction).skip(skip).limit(limit)
     
     transactions_list = []
     for transaction in transactions_cursor:
@@ -126,7 +133,16 @@ def get_transactions():
         transaction['date'] = transaction['date'].isoformat()
         transactions_list.append(transaction)
         
-    return success_response(transactions_list)
+    # FIX #15: Return pagination metadata
+    return success_response({
+        "transactions": transactions_list,
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": total_count,
+            "pages": (total_count + limit - 1) // limit
+        }
+    })
 
 @transactions_bp.route('/<string:transaction_id>', methods=['GET'])
 @jwt_required()
@@ -171,29 +187,23 @@ def delete_transaction(transaction_id):
 @transactions_bp.route('/summary', methods=['GET'])
 @jwt_required()
 def get_transaction_summary():
-    """
-    Calculates and returns a summary of transactions for the current user,
-    focusing on the current month's total expenses.
-    """
     current_user_id = get_jwt_identity()
     user_object_id = ObjectId(current_user_id)
 
-    # Get the start and end of the current month
     now = datetime.now(timezone.utc)
     start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     
-    # Aggregation pipeline to calculate total spend
     pipeline = [
         {
             "$match": {
                 "user_id": user_object_id,
                 "date": {"$gte": start_of_month},
-                "status": "completed" # Only count completed transactions
+                "status": "completed" # FIX #14: Only count completed
             }
         },
         {
             "$group": {
-                "_id": None, # Group all matched documents together
+                "_id": None,
                 "total_spend": {"$sum": "$amount"}
             }
         }
@@ -201,11 +211,9 @@ def get_transaction_summary():
 
     result = list(mongo.db.transactions.aggregate(pipeline))
 
-    # If there are transactions, the result will be a list with one document
     if result:
         total_spend = result[0]['total_spend']
     else:
-        # If there are no transactions, the result is empty
         total_spend = 0
         
     summary = {
@@ -238,24 +246,17 @@ def get_transaction_status(transaction_id):
 @transactions_bp.route('/history', methods=['GET'])
 @jwt_required()
 def get_transaction_history():
-    """
-    Returns transactions grouped by date for easy history viewing.
-    Supports optional date range filtering.
-    """
     current_user_id = get_jwt_identity()
     user_object_id = ObjectId(current_user_id)
     
-    # Optional date range filters
     start_date_str = request.args.get('start_date')
     end_date_str = request.args.get('end_date')
     
-    # Build the match query
     match_query = {
         "user_id": user_object_id,
         "status": "completed"
     }
     
-    # Add date filters if provided
     if start_date_str or end_date_str:
         date_filter = {}
         if start_date_str:
@@ -275,7 +276,6 @@ def get_transaction_history():
         if date_filter:
             match_query["date"] = date_filter
     
-    # Aggregation pipeline to group by date
     pipeline = [
         {"$match": match_query},
         {"$sort": {"date": -1}},
@@ -314,7 +314,6 @@ def get_transaction_history():
     
     result = list(mongo.db.transactions.aggregate(pipeline))
     
-    # Format the transactions' dates to ISO format
     for day_group in result:
         for transaction in day_group["transactions"]:
             transaction["date"] = transaction["date"].isoformat()
@@ -325,4 +324,3 @@ def get_transaction_history():
 @transactions_bp.route('/categories', methods=['GET'])
 def get_categories():
     return success_response(list(PREDEFINED_CATEGORIES))
-
