@@ -10,9 +10,12 @@ from app import mongo
 from app.models.transaction import Transaction
 from .schemas import AddTransactionSchema, PREDEFINED_CATEGORIES
 from .tasks import process_ai_transaction
-from app.utils import success_response, error_response # <-- Import our new helpers
+from app.utils import success_response, error_response
 
 transactions_bp = Blueprint('transactions_bp', __name__)
+
+# ADDED: Track AI processing transactions to prevent timeout issues
+ai_processing_transactions = {}  # {transaction_id: start_time}
 
 @transactions_bp.route('/', methods=['POST'])
 @jwt_required()
@@ -27,22 +30,18 @@ def add_transactions():
     except Exception:
         return error_response("Request must be JSON", 400)
     
-    # FIX #1: Amount Validation (Manual Mode)
     if data.mode == 'manual':
         if data.amount <= 0:
             return error_response("Amount must be greater than zero", 400)
-        if data.amount > 10000000:  # 1 crore max
+        if data.amount > 10000000:
             return error_response("Amount too large. Maximum is ₹10,000,000", 400)
-        # Round to 2 decimal places
         data.amount = round(data.amount, 2)
 
-    # FIX #2: AI Text Validation
     if data.mode == 'ai':
         if not data.text or len(data.text.strip()) == 0:
             return error_response("AI description cannot be empty", 400)
         if len(data.text) > 200:
             return error_response("Description too long. Maximum 200 characters", 400)
-        # Trim whitespace
         data.text = data.text.strip()
 
     transaction_doc = None
@@ -63,10 +62,11 @@ def add_transactions():
     inserted_id = result.inserted_id
 
     if data.mode == 'ai':
+        # ADDED: Track AI processing start time (FIX #23)
+        ai_processing_transactions[str(inserted_id)] = datetime.now(timezone.utc)
         process_ai_transaction.delay(str(inserted_id))
 
     final_doc = mongo.db.transactions.find_one({"_id": inserted_id})
-    # Convert MongoDB specific types to strings for JSON response
     final_doc['_id'] = str(final_doc['_id'])
     final_doc['user_id'] = str(final_doc['user_id'])
     final_doc['date'] = final_doc['date'].isoformat()
@@ -80,7 +80,6 @@ def add_transactions():
 def get_transactions():
     current_user_id = get_jwt_identity()
     
-    # Get filter parameters
     search_query = request.args.get('search')
     category_filter = request.args.get('category')
     min_amount = request.args.get('min_amount')
@@ -88,7 +87,6 @@ def get_transactions():
     sort_by = request.args.get('sort_by', 'date')
     sort_order = request.args.get('sort_order', 'desc')
 
-    # Build query
     query = {"user_id": ObjectId(current_user_id)}
 
     if search_query:
@@ -97,7 +95,6 @@ def get_transactions():
     if category_filter:
         query["category"] = category_filter
     
-    # Add amount filtering
     if min_amount or max_amount:
         amount_filter = {}
         if min_amount:
@@ -113,11 +110,9 @@ def get_transactions():
         if amount_filter:
             query["amount"] = amount_filter
     
-    # Sorting
     sort_direction = -1 if sort_order == 'desc' else 1
     sort_field = sort_by if sort_by in ['date', 'amount'] else 'date'
     
-    # FIX #15: Add pagination
     page = request.args.get('page', 1, type=int)
     limit = request.args.get('limit', 50, type=int)
     skip = (page - 1) * limit
@@ -133,7 +128,6 @@ def get_transactions():
         transaction['date'] = transaction['date'].isoformat()
         transactions_list.append(transaction)
         
-    # FIX #15: Return pagination metadata
     return success_response({
         "transactions": transactions_list,
         "pagination": {
@@ -169,6 +163,18 @@ def delete_transaction(transaction_id):
     current_user_id = get_jwt_identity()
     
     try:
+        # ADDED: Check if transaction is being AI processed (FIX #22 - race condition)
+        transaction = mongo.db.transactions.find_one({
+            "_id": ObjectId(transaction_id),
+            "user_id": ObjectId(current_user_id)
+        })
+        
+        if not transaction:
+            return error_response("Transaction not found", 404)
+        
+        if transaction.get("status") == "processing":
+            return error_response("Cannot delete transaction while AI is processing", 409)
+        
         delete_query = {
             "_id": ObjectId(transaction_id),
             "user_id": ObjectId(current_user_id)
@@ -176,6 +182,8 @@ def delete_transaction(transaction_id):
         result = mongo.db.transactions.find_one_and_delete(delete_query)
         
         if result:
+            # ADDED: Clean up tracking dict if exists
+            ai_processing_transactions.pop(transaction_id, None)
             return success_response({"message": "Transaction deleted successfully"})
         else:
             return error_response("Transaction not found", 404)
@@ -198,7 +206,7 @@ def get_transaction_summary():
             "$match": {
                 "user_id": user_object_id,
                 "date": {"$gte": start_of_month},
-                "status": "completed" # FIX #14: Only count completed
+                "status": "completed"
             }
         },
         {
@@ -235,7 +243,22 @@ def get_transaction_status(transaction_id):
         )
         
         if transaction:
-            return success_response({"status": transaction.get("status", "unknown")})
+            # ADDED: Check for stuck AI processing (FIX #23)
+            status = transaction.get("status", "unknown")
+            if status == "processing" and transaction_id in ai_processing_transactions:
+                start_time = ai_processing_transactions[transaction_id]
+                elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
+                
+                # Mark as failed if stuck for 30+ seconds
+                if elapsed > 30:
+                    mongo.db.transactions.update_one(
+                        {"_id": ObjectId(transaction_id)},
+                        {"$set": {"status": "failed", "error": "AI processing timeout"}}
+                    )
+                    ai_processing_transactions.pop(transaction_id, None)
+                    status = "failed"
+            
+            return success_response({"status": status})
         else:
             return error_response("Transaction not found", 404)
             
