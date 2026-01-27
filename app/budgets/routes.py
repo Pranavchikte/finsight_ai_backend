@@ -30,6 +30,24 @@ def create_budget():
     # Round to 2 decimal places
     data.limit = round(data.limit, 2)
 
+    # FIX #10: Validate month/year not in past or too far in future
+    current_date = datetime.utcnow()
+    current_month = current_date.month
+    current_year = current_date.year
+    
+    # Allow current month and next month only
+    if data.year < current_year:
+        return error_response("Cannot create budgets for past years", 400)
+    
+    if data.year == current_year and data.month < current_month:
+        return error_response("Cannot create budgets for past months", 400)
+    
+    if data.year > current_year + 1:
+        return error_response("Cannot create budgets more than 1 year in advance", 400)
+    
+    if data.year == current_year + 1 and data.month > current_month:
+        return error_response("Cannot create budgets more than 1 year in advance", 400)
+
     # Check if a budget for this category/month/year already exists
     existing_budget = mongo.db.budgets.find_one({
         "user_id": user_id,
@@ -58,6 +76,7 @@ def create_budget():
     new_budget['user_id'] = str(new_budget['user_id'])
     
     return success_response(new_budget, 201)
+
 
 
 @budgets_bp.route('/', methods=['GET'])
