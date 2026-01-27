@@ -13,13 +13,11 @@ class AddTransactionSchema(BaseModel):
     text: str | None = None
     amount: float | None = Field(None, gt=0) 
     category: str | None = None
-    description: str | None = None
+    # FIX #3: Description Length (Schema)
+    description: str | None = Field(None, max_length=200)
 
-    # This replaces BOTH of the old validators.
-    # It runs after all other fields are validated.
     @model_validator(mode='after')
     def check_fields_for_mode(self):
-        # 'self' refers to the model instance with all the data
         if self.mode == 'ai' and not self.text:
             raise ValueError('The "text" field is required for AI mode.')
         
@@ -29,4 +27,4 @@ class AddTransactionSchema(BaseModel):
             if self.category not in PREDEFINED_CATEGORIES:
                 raise ValueError(f'Invalid category. Must be one of {", ".join(PREDEFINED_CATEGORIES)}')
         
-        return self # Always return the model instance
+        return self

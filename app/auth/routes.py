@@ -202,11 +202,19 @@ def profile():
         income = data.get('income')
         if income is None:
             return error_response("Income is a required field.", 400)
+            
+        # FIX #6: Income Validation
         try:
             income = float(income)
-            if income < 0: raise ValueError
+            if income < 0:
+                return error_response("Income cannot be negative", 400)
+            if income > 100000000:  # 10 crore max
+                return error_response("Income too large. Maximum is ₹100,000,000", 400)
+            # Round to 2 decimals
+            income = round(income, 2)
         except (ValueError, TypeError):
-            return error_response("Income must be a valid positive number.", 400)
+            return error_response("Income must be a valid number", 400)
+            
         mongo.db.users.update_one({"_id": user_object_id}, {"$set": {"income": income}})
         updated_user = mongo.db.users.find_one({"_id": user_object_id})
         updated_user['_id'] = str(updated_user['_id'])

@@ -22,6 +22,14 @@ def create_budget():
     except ValidationError as e:
         return error_response(e.errors(), 400)
 
+    # FIX #4: Budget Amount Validation
+    if data.limit <= 0:
+        return error_response("Budget limit must be greater than zero", 400)
+    if data.limit > 10000000:
+        return error_response("Budget limit too large. Maximum is ₹10,000,000", 400)
+    # Round to 2 decimal places
+    data.limit = round(data.limit, 2)
+
     # Check if a budget for this category/month/year already exists
     existing_budget = mongo.db.budgets.find_one({
         "user_id": user_id,

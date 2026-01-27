@@ -5,7 +5,8 @@ from datetime import datetime
 
 class BudgetSchema(BaseModel):
     category: str = Field(...)
-    limit: float = Field(..., gt=0)
+    # FIX #5: Budget Schema Validation (Added le=10000000)
+    limit: float = Field(..., gt=0, le=10000000)
     month: int = Field(..., ge=1, le=12)
     year: int = Field(..., ge=2024)
 

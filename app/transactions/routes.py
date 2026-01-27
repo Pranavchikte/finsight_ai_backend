@@ -26,6 +26,24 @@ def add_transactions():
         return error_response(error_details, 400)
     except Exception:
         return error_response("Request must be JSON", 400)
+    
+    # FIX #1: Amount Validation (Manual Mode)
+    if data.mode == 'manual':
+        if data.amount <= 0:
+            return error_response("Amount must be greater than zero", 400)
+        if data.amount > 10000000:  # 1 crore max
+            return error_response("Amount too large. Maximum is ₹10,000,000", 400)
+        # Round to 2 decimal places
+        data.amount = round(data.amount, 2)
+
+    # FIX #2: AI Text Validation
+    if data.mode == 'ai':
+        if not data.text or len(data.text.strip()) == 0:
+            return error_response("AI description cannot be empty", 400)
+        if len(data.text) > 200:
+            return error_response("Description too long. Maximum 200 characters", 400)
+        # Trim whitespace
+        data.text = data.text.strip()
 
     transaction_doc = None
     if data.mode == 'manual':
