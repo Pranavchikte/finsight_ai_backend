@@ -4,6 +4,8 @@ from app import mongo
 from bson import ObjectId
 from app.services.gemini_service import parse_expense_test, generate_spending_summary
 from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
+IST = timezone(timedelta(hours=5, minutes=30))
 
 @celery.task
 def process_ai_transaction(transaction_id: str):
@@ -93,7 +95,7 @@ def get_ai_summary_task(user_id_str: str):
     logger.info(f"AI_SUMMARY_START: Starting summary generation for user {user_id_str}.")
 
     # Define the date range for the last 30 days
-    end_date = datetime.now(timezone.utc)
+    end_date = datetime.now(IST)
     start_date = end_date - timedelta(days=30)
 
     # Aggregation pipeline to get spending by category

@@ -11,6 +11,8 @@ from app.models.transaction import Transaction
 from .schemas import AddTransactionSchema, PREDEFINED_CATEGORIES
 from .tasks import process_ai_transaction
 from app.utils import success_response, error_response
+from datetime import datetime, timedelta, timezone
+IST = timezone(timedelta(hours=5, minutes=30))
 
 transactions_bp = Blueprint('transactions_bp', __name__)
 
@@ -63,7 +65,7 @@ def add_transactions():
 
     if data.mode == 'ai':
         # ADDED: Track AI processing start time (FIX #23)
-        ai_processing_transactions[str(inserted_id)] = datetime.now(timezone.utc)
+        ai_processing_transactions[str(inserted_id)] = datetime.now(IST)
         process_ai_transaction.delay(str(inserted_id))
 
     final_doc = mongo.db.transactions.find_one({"_id": inserted_id})
@@ -198,7 +200,7 @@ def get_transaction_summary():
     current_user_id = get_jwt_identity()
     user_object_id = ObjectId(current_user_id)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(IST)
     start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     
     pipeline = [
@@ -247,7 +249,7 @@ def get_transaction_status(transaction_id):
             status = transaction.get("status", "unknown")
             if status == "processing" and transaction_id in ai_processing_transactions:
                 start_time = ai_processing_transactions[transaction_id]
-                elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
+                elapsed = (datetime.now(IST) - start_time).total_seconds()
                 
                 # Mark as failed if stuck for 30+ seconds
                 if elapsed > 30:
