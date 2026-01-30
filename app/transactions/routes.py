@@ -10,9 +10,11 @@ from app import mongo
 from app.models.transaction import Transaction
 from .schemas import AddTransactionSchema, PREDEFINED_CATEGORIES
 from .tasks import process_ai_transaction
-from app.utils import success_response, error_response # <-- Import our new helpers
+from app.utils import success_response, error_response
 
 transactions_bp = Blueprint('transactions_bp', __name__)
+
+ai_processing_transactions = {}
 
 @transactions_bp.route('/', methods=['POST'])
 @jwt_required()
@@ -26,6 +28,20 @@ def add_transactions():
         return error_response(error_details, 400)
     except Exception:
         return error_response("Request must be JSON", 400)
+    
+    if data.mode == 'manual':
+        if data.amount <= 0:
+            return error_response("Amount must be greater than zero", 400)
+        if data.amount > 10000000:
+            return error_response("Amount too large. Maximum is ₹10,000,000", 400)
+        data.amount = round(data.amount, 2)
+
+    if data.mode == 'ai':
+        if not data.text or len(data.text.strip()) == 0:
+            return error_response("AI description cannot be empty", 400)
+        if len(data.text) > 200:
+            return error_response("Description too long. Maximum 200 characters", 400)
+        data.text = data.text.strip()
 
     transaction_doc = None
     if data.mode == 'manual':
@@ -45,10 +61,10 @@ def add_transactions():
     inserted_id = result.inserted_id
 
     if data.mode == 'ai':
+        ai_processing_transactions[str(inserted_id)] = datetime.now(timezone.utc)
         process_ai_transaction.delay(str(inserted_id))
 
     final_doc = mongo.db.transactions.find_one({"_id": inserted_id})
-    # Convert MongoDB specific types to strings for JSON response
     final_doc['_id'] = str(final_doc['_id'])
     final_doc['user_id'] = str(final_doc['user_id'])
     final_doc['date'] = final_doc['date'].isoformat()
@@ -62,35 +78,63 @@ def add_transactions():
 def get_transactions():
     current_user_id = get_jwt_identity()
     
-    # --- START OF CHANGES ---
-    # Get filter parameters from the request's query string
     search_query = request.args.get('search')
     category_filter = request.args.get('category')
+    min_amount = request.args.get('min_amount')
+    max_amount = request.args.get('max_amount')
+    sort_by = request.args.get('sort_by', 'date')
+    sort_order = request.args.get('sort_order', 'desc')
 
-    # Start building the query with the mandatory user_id
     query = {"user_id": ObjectId(current_user_id)}
 
-    # If a search term is provided, add a case-insensitive regex search on the description
     if search_query:
         query["description"] = {"$regex": re.compile(search_query, re.IGNORECASE)}
 
-    # If a category is provided, add it to the query
     if category_filter:
         query["category"] = category_filter
-    # --- END OF CHANGES ---
     
-    # The rest of the function remains the same, but uses the new dynamic query
-    transactions_cursor = mongo.db.transactions.find(query).sort("date", -1)
+    if min_amount or max_amount:
+        amount_filter = {}
+        if min_amount:
+            try:
+                amount_filter["$gte"] = float(min_amount)
+            except ValueError:
+                return error_response("Invalid min_amount format", 400)
+        if max_amount:
+            try:
+                amount_filter["$lte"] = float(max_amount)
+            except ValueError:
+                return error_response("Invalid max_amount format", 400)
+        if amount_filter:
+            query["amount"] = amount_filter
+    
+    sort_direction = -1 if sort_order == 'desc' else 1
+    sort_field = sort_by if sort_by in ['date', 'amount'] else 'date'
+    
+    page = request.args.get('page', 1, type=int)
+    limit = request.args.get('limit', 50, type=int)
+    skip = (page - 1) * limit
+    limit = min(limit, 100)
+
+    total_count = mongo.db.transactions.count_documents(query)
+    transactions_cursor = mongo.db.transactions.find(query).sort(sort_field, sort_direction).skip(skip).limit(limit)
     
     transactions_list = []
     for transaction in transactions_cursor:
         transaction['_id'] = str(transaction['_id'])
         transaction['user_id'] = str(transaction['user_id'])
-        transaction['date'] = transaction['date'].isoformat()
+        transaction['date'] = transaction['date'].replace(tzinfo=timezone.utc).isoformat()
         transactions_list.append(transaction)
         
-    return success_response(transactions_list)
-
+    return success_response({
+        "transactions": transactions_list,
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": total_count,
+            "pages": (total_count + limit - 1) // limit
+        }
+    })
 
 @transactions_bp.route('/<string:transaction_id>', methods=['GET'])
 @jwt_required()
@@ -104,7 +148,7 @@ def get_transaction(transaction_id):
         if transaction:
             transaction['_id'] = str(transaction['_id'])
             transaction['user_id'] = str(transaction['user_id'])
-            transaction['date'] = transaction['date'].isoformat()
+            transaction['date'] = transaction['date'].replace(tzinfo=timezone.utc).isoformat()
             return success_response(transaction)
         else:
             return error_response("Transaction not found", 404)
@@ -117,6 +161,17 @@ def delete_transaction(transaction_id):
     current_user_id = get_jwt_identity()
     
     try:
+        transaction = mongo.db.transactions.find_one({
+            "_id": ObjectId(transaction_id),
+            "user_id": ObjectId(current_user_id)
+        })
+        
+        if not transaction:
+            return error_response("Transaction not found", 404)
+        
+        if transaction.get("status") == "processing":
+            return error_response("Cannot delete transaction while AI is processing", 409)
+        
         delete_query = {
             "_id": ObjectId(transaction_id),
             "user_id": ObjectId(current_user_id)
@@ -124,6 +179,7 @@ def delete_transaction(transaction_id):
         result = mongo.db.transactions.find_one_and_delete(delete_query)
         
         if result:
+            ai_processing_transactions.pop(transaction_id, None)
             return success_response({"message": "Transaction deleted successfully"})
         else:
             return error_response("Transaction not found", 404)
@@ -135,29 +191,23 @@ def delete_transaction(transaction_id):
 @transactions_bp.route('/summary', methods=['GET'])
 @jwt_required()
 def get_transaction_summary():
-    """
-    Calculates and returns a summary of transactions for the current user,
-    focusing on the current month's total expenses.
-    """
     current_user_id = get_jwt_identity()
     user_object_id = ObjectId(current_user_id)
 
-    # Get the start and end of the current month
     now = datetime.now(timezone.utc)
     start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     
-    # Aggregation pipeline to calculate total spend
     pipeline = [
         {
             "$match": {
                 "user_id": user_object_id,
                 "date": {"$gte": start_of_month},
-                "status": "completed" # Only count completed transactions
+                "status": "completed"
             }
         },
         {
             "$group": {
-                "_id": None, # Group all matched documents together
+                "_id": None,
                 "total_spend": {"$sum": "$amount"}
             }
         }
@@ -165,11 +215,9 @@ def get_transaction_summary():
 
     result = list(mongo.db.transactions.aggregate(pipeline))
 
-    # If there are transactions, the result will be a list with one document
     if result:
         total_spend = result[0]['total_spend']
     else:
-        # If there are no transactions, the result is empty
         total_spend = 0
         
     summary = {
@@ -191,15 +239,105 @@ def get_transaction_status(transaction_id):
         )
         
         if transaction:
-            return success_response({"status": transaction.get("status", "unknown")})
+            status = transaction.get("status", "unknown")
+            if status == "processing" and transaction_id in ai_processing_transactions:
+                start_time = ai_processing_transactions[transaction_id]
+                elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
+                
+                if elapsed > 30:
+                    mongo.db.transactions.update_one(
+                        {"_id": ObjectId(transaction_id)},
+                        {"$set": {"status": "failed", "error": "AI processing timeout"}}
+                    )
+                    ai_processing_transactions.pop(transaction_id, None)
+                    status = "failed"
+            
+            return success_response({"status": status})
         else:
             return error_response("Transaction not found", 404)
             
     except InvalidId:
         return error_response("Invalid transaction ID format", 400)
 
+
+@transactions_bp.route('/history', methods=['GET'])
+@jwt_required()
+def get_transaction_history():
+    current_user_id = get_jwt_identity()
+    user_object_id = ObjectId(current_user_id)
+    
+    start_date_str = request.args.get('start_date')
+    end_date_str = request.args.get('end_date')
+    
+    match_query = {
+        "user_id": user_object_id,
+        "status": "completed"
+    }
+    
+    if start_date_str or end_date_str:
+        date_filter = {}
+        if start_date_str:
+            try:
+                start_date = datetime.fromisoformat(start_date_str).replace(tzinfo=timezone.utc)
+                date_filter["$gte"] = start_date
+            except ValueError:
+                return error_response("Invalid start_date format. Use ISO 8601.", 400)
+        
+        if end_date_str:
+            try:
+                end_date = datetime.fromisoformat(end_date_str).replace(tzinfo=timezone.utc)
+                date_filter["$lte"] = end_date
+            except ValueError:
+                return error_response("Invalid end_date format. Use ISO 8601.", 400)
+        
+        if date_filter:
+            match_query["date"] = date_filter
+    
+    pipeline = [
+        {"$match": match_query},
+        {"$sort": {"date": -1}},
+        {
+            "$group": {
+                "_id": {
+                    "$dateToString": {
+                        "format": "%Y-%m-%d",
+                        "date": "$date"
+                    }
+                },
+                "total_spend": {"$sum": "$amount"},
+                "transaction_count": {"$sum": 1},
+                "transactions": {
+                    "$push": {
+                        "_id": {"$toString": "$_id"},
+                        "amount": "$amount",
+                        "category": "$category",
+                        "description": "$description",
+                        "date": "$date"
+                    }
+                }
+            }
+        },
+        {
+            "$project": {
+                "date": "$_id",
+                "total_spend": 1,
+                "transaction_count": 1,
+                "transactions": 1,
+                "_id": 0
+            }
+        },
+        {"$sort": {"date": -1}}
+    ]
+    
+    result = list(mongo.db.transactions.aggregate(pipeline))
+    
+    for day_group in result:
+        for transaction in day_group["transactions"]:
+            transaction["date"] = transaction["date"].replace(tzinfo=timezone.utc).isoformat()
+    
+    return success_response(result)
+
     
 @transactions_bp.route('/categories', methods=['GET'])
 def get_categories():
     return success_response(list(PREDEFINED_CATEGORIES))
-

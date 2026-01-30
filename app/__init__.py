@@ -7,13 +7,16 @@ from flask_pymongo import PyMongo
 from flask_jwt_extended import JWTManager
 from flask_cors import CORS
 from flask_bcrypt import Bcrypt
+from flask_mail import Mail
 from config import Config
 from .celery_utils import create_celery_app
+
 
 # Initialize extensions globally, but without app context yet
 mongo = PyMongo()
 jwt = JWTManager()
 bcrypt = Bcrypt()
+mail = Mail()  
 celery = None
 
 # --- FIX 1: Define the blocklist checker function WITHOUT the decorator ---
@@ -44,6 +47,7 @@ def create_app():
     mongo.init_app(app)
     jwt.init_app(app)
     bcrypt.init_app(app)
+    mail.init_app(app)  
     celery = create_celery_app(app)
 
     # --- FIX 2: Register the blocklist loader AFTER jwt.init_app() ---
@@ -55,7 +59,6 @@ def create_app():
         from .auth.routes import auth_bp
         from .transactions.routes import transactions_bp
         from .budgets.routes import budgets_bp 
-        from .analytics.routes import analytics_bp 
         from .ai.routes import ai_bp
         
         # Configure CORS for all blueprints
@@ -67,14 +70,12 @@ def create_app():
         CORS(auth_bp, origins=allowed_origins, supports_credentials=True)
         CORS(transactions_bp, origins=allowed_origins, supports_credentials=True)
         CORS(budgets_bp, origins=allowed_origins, supports_credentials=True)
-        CORS(analytics_bp, origins=allowed_origins, supports_credentials=True)
         CORS(ai_bp, origins=allowed_origins, supports_credentials=True)
         
         # Register blueprints
         app.register_blueprint(auth_bp, url_prefix='/api/auth')
         app.register_blueprint(transactions_bp, url_prefix='/api/transactions')
         app.register_blueprint(budgets_bp, url_prefix='/api/budgets')
-        app.register_blueprint(analytics_bp, url_prefix='/api/analytics')
         app.register_blueprint(ai_bp, url_prefix='/api/ai')
         
         # Create database indexes

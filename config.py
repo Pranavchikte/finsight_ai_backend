@@ -1,8 +1,13 @@
 import os
 from datetime import timedelta
+from dotenv import load_dotenv
 
-# The `load_dotenv()` call has been removed.
-# The container will now only use environment variables provided by Railway.
+# Load environment-specific .env file
+env = os.getenv('FLASK_ENV', 'development')
+if env == 'production':
+    load_dotenv('.env.production')
+else:
+    load_dotenv('.env.local')
 
 class Config:
     MONGO_URI = os.environ.get('MONGO_URI')
@@ -18,3 +23,17 @@ class Config:
     BROKER_URL = os.environ.get('BROKER_URL')
     RESULT_BACKEND = os.environ.get('RESULT_BACKEND')
     BROKER_CONNECTION_RETRY_ON_STARTUP = True
+    
+    # Mail configuration
+    MAIL_SERVER = os.environ.get('MAIL_SERVER')
+    MAIL_PORT = int(os.environ.get('MAIL_PORT', 587))
+    MAIL_USE_TLS = os.environ.get('MAIL_USE_TLS', 'True') == 'True'
+    MAIL_USERNAME = os.environ.get('MAIL_USERNAME')
+    MAIL_PASSWORD = os.environ.get('MAIL_PASSWORD')
+    MAIL_DEFAULT_SENDER = os.environ.get('MAIL_DEFAULT_SENDER')
+
+    # API timeout configuration
+    API_TIMEOUT = 30
+    
+    # Timezone configuration - store all dates in UTC
+    DEFAULT_TIMEZONE = 'UTC'
