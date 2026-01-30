@@ -11,13 +11,10 @@ from app.models.transaction import Transaction
 from .schemas import AddTransactionSchema, PREDEFINED_CATEGORIES
 from .tasks import process_ai_transaction
 from app.utils import success_response, error_response
-from datetime import datetime, timedelta, timezone
-IST = timezone(timedelta(hours=5, minutes=30))
 
 transactions_bp = Blueprint('transactions_bp', __name__)
 
-# ADDED: Track AI processing transactions to prevent timeout issues
-ai_processing_transactions = {}  # {transaction_id: start_time}
+ai_processing_transactions = {}
 
 @transactions_bp.route('/', methods=['POST'])
 @jwt_required()
@@ -64,8 +61,7 @@ def add_transactions():
     inserted_id = result.inserted_id
 
     if data.mode == 'ai':
-        # ADDED: Track AI processing start time (FIX #23)
-        ai_processing_transactions[str(inserted_id)] = datetime.now(IST)
+        ai_processing_transactions[str(inserted_id)] = datetime.now(timezone.utc)
         process_ai_transaction.delay(str(inserted_id))
 
     final_doc = mongo.db.transactions.find_one({"_id": inserted_id})
@@ -127,7 +123,7 @@ def get_transactions():
     for transaction in transactions_cursor:
         transaction['_id'] = str(transaction['_id'])
         transaction['user_id'] = str(transaction['user_id'])
-        transaction['date'] = transaction['date'].isoformat()
+        transaction['date'] = transaction['date'].replace(tzinfo=timezone.utc).isoformat()
         transactions_list.append(transaction)
         
     return success_response({
@@ -152,7 +148,7 @@ def get_transaction(transaction_id):
         if transaction:
             transaction['_id'] = str(transaction['_id'])
             transaction['user_id'] = str(transaction['user_id'])
-            transaction['date'] = transaction['date'].isoformat()
+            transaction['date'] = transaction['date'].replace(tzinfo=timezone.utc).isoformat()
             return success_response(transaction)
         else:
             return error_response("Transaction not found", 404)
@@ -165,7 +161,6 @@ def delete_transaction(transaction_id):
     current_user_id = get_jwt_identity()
     
     try:
-        # ADDED: Check if transaction is being AI processed (FIX #22 - race condition)
         transaction = mongo.db.transactions.find_one({
             "_id": ObjectId(transaction_id),
             "user_id": ObjectId(current_user_id)
@@ -184,7 +179,6 @@ def delete_transaction(transaction_id):
         result = mongo.db.transactions.find_one_and_delete(delete_query)
         
         if result:
-            # ADDED: Clean up tracking dict if exists
             ai_processing_transactions.pop(transaction_id, None)
             return success_response({"message": "Transaction deleted successfully"})
         else:
@@ -200,7 +194,7 @@ def get_transaction_summary():
     current_user_id = get_jwt_identity()
     user_object_id = ObjectId(current_user_id)
 
-    now = datetime.now(IST)
+    now = datetime.now(timezone.utc)
     start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     
     pipeline = [
@@ -245,13 +239,11 @@ def get_transaction_status(transaction_id):
         )
         
         if transaction:
-            # ADDED: Check for stuck AI processing (FIX #23)
             status = transaction.get("status", "unknown")
             if status == "processing" and transaction_id in ai_processing_transactions:
                 start_time = ai_processing_transactions[transaction_id]
-                elapsed = (datetime.now(IST) - start_time).total_seconds()
+                elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
                 
-                # Mark as failed if stuck for 30+ seconds
                 if elapsed > 30:
                     mongo.db.transactions.update_one(
                         {"_id": ObjectId(transaction_id)},
@@ -341,7 +333,7 @@ def get_transaction_history():
     
     for day_group in result:
         for transaction in day_group["transactions"]:
-            transaction["date"] = transaction["date"].isoformat()
+            transaction["date"] = transaction["date"].replace(tzinfo=timezone.utc).isoformat()
     
     return success_response(result)
 

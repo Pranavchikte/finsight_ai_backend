@@ -4,8 +4,6 @@ from app import mongo
 from bson import ObjectId
 from app.services.gemini_service import parse_expense_test, generate_spending_summary
 from datetime import datetime, timedelta, timezone
-from datetime import datetime, timedelta, timezone
-IST = timezone(timedelta(hours=5, minutes=30))
 
 @celery.task
 def process_ai_transaction(transaction_id: str):
@@ -28,11 +26,9 @@ def process_ai_transaction(transaction_id: str):
 
         logger.info(f"AI_TASK_START: Calling Gemini API for transaction {transaction_id}.")
         
-        # ADDED: Try-catch to capture detailed Gemini errors (FIX #29)
         try:
             parsed_data = parse_expense_test(raw_text)
         except Exception as gemini_error:
-            # ADDED: Store detailed Gemini error (FIX #29)
             error_message = str(gemini_error)
             logger.error(f"AI_TASK_GEMINI_ERROR: Gemini API failed for transaction {transaction_id}. Error: {error_message}")
             mongo.db.transactions.update_one(
@@ -40,13 +36,12 @@ def process_ai_transaction(transaction_id: str):
                 {"$set": {
                     "status": "failed",
                     "failure_reason": "AI parsing failed",
-                    "error_details": error_message[:500]  # Store first 500 chars of error
+                    "error_details": error_message[:500]
                 }}
             )
             return
 
         if not parsed_data:
-            # ADDED: More specific error message (FIX #29)
             error_msg = "AI could not extract amount, category, or description from the text"
             mongo.db.transactions.update_one(
                 {"_id": ObjectId(transaction_id)},
@@ -72,7 +67,6 @@ def process_ai_transaction(transaction_id: str):
         logger.info(f"AI_TASK_SUCCESS: Successfully processed transaction {transaction_id}.")
 
     except Exception as e:
-        # ADDED: Capture and store unexpected errors with details (FIX #29)
         error_message = str(e)
         logger.error(f"AI_TASK_CRITICAL_FAIL: An unexpected error occurred for transaction {transaction_id}: {e}", exc_info=True)
         mongo.db.transactions.update_one(
@@ -94,11 +88,9 @@ def get_ai_summary_task(user_id_str: str):
     
     logger.info(f"AI_SUMMARY_START: Starting summary generation for user {user_id_str}.")
 
-    # Define the date range for the last 30 days
-    end_date = datetime.now(IST)
+    end_date = datetime.now(timezone.utc)
     start_date = end_date - timedelta(days=30)
 
-    # Aggregation pipeline to get spending by category
     pipeline = [
         {
             "$match": {

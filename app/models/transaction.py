@@ -1,7 +1,4 @@
-from datetime import datetime, timedelta, timezone
-
-# IST timezone helper
-IST = timezone(timedelta(hours=5, minutes=30))
+from datetime import datetime, timezone
 
 class Transaction:
     @staticmethod
@@ -11,7 +8,7 @@ class Transaction:
             "amount": amount,
             "category": category,
             "description": description,
-            "date": date if date else datetime.now(IST),  # Store in IST
+            "date": date if date else datetime.now(timezone.utc),
             "status": "completed",
         }
         
@@ -23,6 +20,6 @@ class Transaction:
             "description": f"Processing: {text[:40]}...",
             "amount": 0, 
             "category": "Other", 
-            "date": date if date else datetime.now(IST),  # Store in IST
+            "date": date if date else datetime.now(timezone.utc),
             "status": "processing",
         }

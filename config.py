@@ -32,5 +32,8 @@ class Config:
     MAIL_PASSWORD = os.environ.get('MAIL_PASSWORD')
     MAIL_DEFAULT_SENDER = os.environ.get('MAIL_DEFAULT_SENDER')
 
-    # ADDED: API timeout configuration (FIX #20)
-    API_TIMEOUT = 30  # seconds
+    # API timeout configuration
+    API_TIMEOUT = 30
+    
+    # Timezone configuration - store all dates in UTC
+    DEFAULT_TIMEZONE = 'UTC'
