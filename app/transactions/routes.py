@@ -301,7 +301,8 @@ def get_transaction_history():
                 "_id": {
                     "$dateToString": {
                         "format": "%Y-%m-%d",
-                        "date": "$date"
+                        "date": "$date",
+                        "timezone": "+05:30"
                     }
                 },
                 "total_spend": {"$sum": "$amount"},
