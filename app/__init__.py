@@ -8,6 +8,7 @@ from flask_jwt_extended import JWTManager
 from flask_cors import CORS
 from flask_bcrypt import Bcrypt
 from flask_mail import Mail
+from flasgger import Swagger
 from config import Config
 from .celery_utils import create_celery_app
 
@@ -78,6 +79,54 @@ def create_app():
         app.register_blueprint(budgets_bp, url_prefix='/api/budgets')
         app.register_blueprint(ai_bp, url_prefix='/api/ai')
         
+        # Swagger API Documentation
+        swagger_config = {
+            "headers": [],
+            "specs": [
+                {
+                    "endpoint": 'apispec',
+                    "route": '/api/apispec.json',
+                    "rule_filter": lambda rule: True,
+                    "model_filter": lambda tag: True,
+                }
+            ],
+            "static_url_path": "/api/flasgger_static",
+            "swagger_ui": True,
+            "specs_route": "/api/docs"
+        }
+        
+        swagger_template = {
+            "info": {
+                "title": "FinSight AI API",
+                "description": "Intelligent expense tracking API with AI-powered categorization, real-time insights, and budget management",
+                "version": "1.0.0",
+                "contact": {
+                    "name": "FinSight AI",
+                    "url": "https://www.finsightfinance.me"
+                }
+            },
+            "host": "api.finsightfinance.me",
+            "basePath": "/",
+            "schemes": ["https"],
+            "securityDefinitions": {
+                "Bearer": {
+                    "type": "apiKey",
+                    "name": "Authorization",
+                    "in": "header",
+                    "description": "JWT Authorization header. Example: 'Bearer {access_token}'"
+                }
+            },
+            "security": [{"Bearer": []}],
+            "tags": [
+                {"name": "Authentication", "description": "User authentication and session management"},
+                {"name": "Transactions", "description": "Expense tracking and transaction management"},
+                {"name": "AI", "description": "AI-powered expense categorization and insights"},
+                {"name": "Budgets", "description": "Budget creation and monitoring"}
+            ]
+        }
+        
+        Swagger(app, config=swagger_config, template=swagger_template)
+        
         # Create database indexes
         try:
             mongo.db.users.create_index("email", unique=True)
@@ -92,7 +141,7 @@ def create_app():
         # Basic routes
         @app.route('/', methods=['GET'])
         def index():
-            return {"api_status": "FinSight AI Backend v2.0 is running"}, 200
+            return {"api_status": "FinSight AI Backend v2.0 is running", "docs": "https://api.finsightfinance.me/api/docs"}, 200
         
         @app.route('/health', methods=['GET'])
         def health_check():
