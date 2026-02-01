@@ -34,7 +34,7 @@ FinSight AI Backend is a production-ready RESTful API built with Flask that powe
 ## Screenshots
 
 ### API Documentation (Swagger UI)
-![API Documentation](./screenshots/api_docs.jpg)
+![API Documentation](./screenshots/api_doc.jpg)
 
 ### Dashboard with AI Processing
 ![Dashboard](./screenshots/dashboard-ai.jpg)
