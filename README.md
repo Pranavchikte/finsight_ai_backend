@@ -494,7 +494,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 **Pranav Chikte**  
 - GitHub: [@Pranavchikte](https://github.com/Pranavchikte)
-- LinkedIn: [Pranav Chikte](https://www.linkedin.com/in/pranav-chikte)
+- LinkedIn: [Pranav Chikte](https://www.linkedin.com/in/pranavchikte/)
 - Email: chiktepranav1378@gmail.com
 
 ---
