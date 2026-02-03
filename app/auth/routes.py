@@ -4,10 +4,9 @@ from pydantic import ValidationError
 from datetime import datetime, timezone
 import redis
 from bson import ObjectId
-from flask_mail import Message
 import re # ADDED: For password validation
-
-from app import mongo, bcrypt, mail
+from app import mongo, bcrypt
+from app.tasks.email_tasks import send_email_task
 from app.models.user import User
 from .schemas import RegisterSchema, LoginSchema
 from app.utils import success_response, error_response, generate_reset_token, verify_reset_token
@@ -150,39 +149,37 @@ def forgot_password():
     
     # Send email
     try:
-        msg = Message(
-            subject="Reset Your FinSight AI Password",
-            recipients=[email],
-            html=f"""
-            <html>
-                <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-                    <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                        <h2 style="color: #2563eb;">Reset Your Password</h2>
-                        <p>You requested to reset your password for your FinSight AI account.</p>
-                        <p>Click the button below to reset your password:</p>
-                        <div style="text-align: center; margin: 30px 0;">
-                            <a href="{reset_link}" 
-                               style="background-color: #2563eb; color: white; padding: 12px 30px; 
-                                      text-decoration: none; border-radius: 5px; display: inline-block;">
-                                Reset Password
-                            </a>
-                        </div>
-                        <p style="color: #666; font-size: 14px;">
-                            This link will expire in 1 hour for security reasons.
-                        </p>
-                        <p style="color: #666; font-size: 14px;">
-                            If you didn't request this, please ignore this email.
-                        </p>
-                        <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
-                        <p style="color: #999; font-size: 12px;">
-                            FinSight AI - Intelligent Expense Tracking
-                        </p>
-                    </div>
-                </body>
-            </html>
-            """
-        )
-        mail.send(msg)
+        subject = "Reset Your FinSight AI Password"
+        html_content = f"""
+                        <html>
+                            <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+                                <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+                                    <h2 style="color: #2563eb;">Reset Your Password</h2>
+                                    <p>You requested to reset your password for your FinSight AI account.</p>
+                                    <p>Click the button below to reset your password:</p>
+                                    <div style="text-align: center; margin: 30px 0;">
+                                        <a href="{reset_link}" 
+                                        style="background-color: #2563eb; color: white; padding: 12px 30px; 
+                                                text-decoration: none; border-radius: 5px; display: inline-block;">
+                                            Reset Password
+                                        </a>
+                                    </div>
+                                    <p style="color: #666; font-size: 14px;">
+                                        This link will expire in 1 hour for security reasons.
+                                    </p>
+                                    <p style="color: #666; font-size: 14px;">
+                                        If you didn't request this, please ignore this email.
+                                    </p>
+                                    <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+                                    <p style="color: #999; font-size: 12px;">
+                                        FinSight AI - Intelligent Expense Tracking
+                                    </p>
+                                </div>
+                            </body>
+                        </html>
+                        """
+
+        send_email_task.delay(email, subject, html_content)
         current_app.logger.info(f"Password reset email sent to {email}")
     except Exception as e:
         current_app.logger.error(f"Failed to send reset email to {email}: {e}")
