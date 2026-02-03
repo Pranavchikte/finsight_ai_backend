@@ -25,6 +25,8 @@ services:
   backend:
     build: . # Build the image from the Dockerfile in the current directory
     container_name: finsight-backend
+    env_file:
+      - .env
     ports:
       - "5000:5000"
     volumes:
@@ -38,6 +40,13 @@ services:
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - FRONTEND_URL=${FRONTEND_URL}
+      - MAIL_SERVER=${MAIL_SERVER}
+      - MAIL_PORT=${MAIL_PORT}
+      - MAIL_USE_TLS=${MAIL_USE_TLS}
+      - MAIL_USE_SSL=${MAIL_USE_SSL}
+      - MAIL_USERNAME=${MAIL_USERNAME}
+      - MAIL_PASSWORD=${MAIL_PASSWORD}
+      - MAIL_DEFAULT_SENDER=${MAIL_DEFAULT_SENDER}
     depends_on:
       - mongo
       - redis
@@ -47,6 +56,8 @@ services:
   celery-worker:
     build: . # Uses the same image as the backend
     container_name: finsight-celery-worker
+    env_file:
+      - .env
     command: celery -A celery_worker.celery worker --loglevel=info -P solo
     volumes:
       - .:/app
@@ -55,6 +66,13 @@ services:
       - BROKER_URL=redis://redis:6379/0
       - RESULT_BACKEND=redis://redis:6379/0
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - MAIL_SERVER=${MAIL_SERVER}
+      - MAIL_PORT=${MAIL_PORT}
+      - MAIL_USE_TLS=${MAIL_USE_TLS}
+      - MAIL_USE_SSL=${MAIL_USE_SSL}
+      - MAIL_USERNAME=${MAIL_USERNAME}
+      - MAIL_PASSWORD=${MAIL_PASSWORD}
+      - MAIL_DEFAULT_SENDER=${MAIL_DEFAULT_SENDER}
     depends_on:
       - mongo
       - redis
