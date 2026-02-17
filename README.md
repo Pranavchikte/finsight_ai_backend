@@ -1,221 +1,555 @@
-# Finsight AI — Backend
+# FinSight AI Backend
 
-Finsight AI is a full-stack, AI-powered expense manager that automates transaction logging and provides intelligent budgeting advice. This repository contains the high-performance backend powering the product launch. The live frontend is available at: https://finsight-ai-frontend-2grh.vercel.app/
+![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat&logo=python&logoColor=white)
+![Flask](https://img.shields.io/badge/Flask-3.1.2-000000?style=flat&logo=flask&logoColor=white)
+![MongoDB](https://img.shields.io/badge/MongoDB-NoSQL-47A248?style=flat&logo=mongodb&logoColor=white)
+![Redis](https://img.shields.io/badge/Redis-Cache-DC382D?style=flat&logo=redis&logoColor=white)
+![Celery](https://img.shields.io/badge/Celery-Task%20Queue-B49C5C?style=flat&logo=celery&logoColor=white)
+![Gemini AI](https://img.shields.io/badge/Google-Gemini%20AI-4285F4?style=flat&logo=google&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat&logo=docker&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-green?style=flat)
 
-Launch status: Startup product — live (production).
+> Production-ready Flask REST API powering intelligent expense tracking with AI-powered categorization, budget management, and real-time insights.
 
-Table of contents
-- About
-- Live demo
-- Key features
-- Architecture overview
-- Technology stack
-- API overview
-- Installation & local development
-- Environment variables
-- Running (dev & production)
-- Background tasks & Celery
-- Deployment & CI/CD
-- Observability & monitoring
-- Security best practices
-- Contributing
-- License
-- Contact
+## Live Demo
 
-About
--------
-Finsight AI automates expense tracking by ingesting transactions (bank, card, receipts), using GenAI (Gemini API) to summarize transactions, categorize them, and deliver personalized budgeting recommendations. The backend is built for performance, scale, and rapid iteration.
+**Frontend Application:** [https://www.finsightfinance.me](https://www.finsightfinance.me)
 
-Key highlights implemented
-- Flask-based REST API designed for low latency and ease of extension.
-- Celery + Redis for asynchronous/background processing (GenAI calls, heavy transforms, batch imports).
-- GenAI core integration (Gemini API) to produce smart transaction summaries and financial insights.
-- MongoDB for flexible, schema-evolving data persistence of users, transactions, budgets, and analytics.
-- Deployed end-to-end on Railway with CI/CD-enabled pipelines.
-- React frontend (separate repo) consumes backend APIs and provides the user interface.
+**API Documentation:** [https://api.finsightfinance.me/api/docs](https://api.finsightfinance.me/api/docs)
 
-Live demo
----------
-Frontend: https://finsight-ai-frontend-2grh.vercel.app/
+**Backend API:** [https://api.finsightfinance.me](https://api.finsightfinance.me)
 
-Features
---------
-- Automatic transaction ingestion and parsing
-- AI-driven transaction summarization & categorization using Gemini
-- Intelligent budget recommendations and insights
-- Asynchronous processing for heavy/long-running jobs
-- User management & authentication (JWT/Bearer)
-- Analytics endpoints for dashboards and reporting
+---
 
-Architecture overview
----------------------
-- Client (React) <--> Backend (Flask REST API)
-- Backend enqueues heavy tasks to Celery (using Redis broker)
-- Celery workers call Gemini API for summarization and insights, then persist results to MongoDB
-- MongoDB stores users, transactions, budgets, and analytics
-- Deployment: Railway (backend + workers + MongoDB add-on). Redis as a hosted service (or Railway add-on)
+## Table of Contents
 
-Tech stack
-----------
-- Backend framework: Flask
-- Asynchronous tasks: Celery
-- Broker: Redis
-- AI / GenAI: Gemini API
-- Database: MongoDB
-- Frontend: React (separate repository)
-- Deployment: Railway (CI/CD)
-- Language: Python 3.10+
+- [About](#about)
+- [Architecture Overview](#architecture-overview)
+- [Tech Stack](#tech-stack)
+- [Project Structure](#project-structure)
+- [Features](#features)
+- [API Endpoints](#api-endpoints)
+- [Getting Started](#getting-started)
+- [Environment Variables](#environment-variables)
+- [Docker Deployment](#docker-deployment)
+- [Testing](#testing)
+- [Security Features](#security-features)
+- [System Design](#system-design)
+- [Future Enhancements](#future-enhancements)
 
-API overview (high-level)
--------------------------
-This README documents high-level endpoints. For a full OpenAPI/Swagger spec, check the repo's docs or the /openapi endpoint (if enabled).
+---
 
-- POST /api/v1/auth/register — create user
-- POST /api/v1/auth/login — authenticate user, returns JWT
-- GET /api/v1/transactions — list user transactions (supports pagination, filters)
-- POST /api/v1/transactions/import — upload or submit transactions for ingestion
-- POST /api/v1/transactions/:id/summarize — trigger/manual re-summarize by GenAI
-- GET /api/v1/insights/summary — aggregated budget insights and recommendations
-- POST /api/v1/budgets — create/update budget goals
+## About
 
-Installation & local development
--------------------------------
-Prerequisites
-- Python 3.10+
-- pip (or poetry)
-- Redis (local or remote)
-- MongoDB (local or remote)
-- Node.js (for frontend, optional)
-- Railway CLI / account (optional for deployment)
+FinSight AI is an intelligent expense tracking platform that automates transaction logging using GenAI. It transforms how users manage their finances by:
 
-Quickstart (development)
-1. Clone the repo
-   git clone https://github.com/Pranavchikte/finsight_ai_backend.git
+- Converting natural language inputs into structured transactions
+- Providing AI-powered spending insights and recommendations
+- Enabling smart budget management with real-time tracking
+- Delivering personalized financial advice based on spending patterns
+
+This backend powers the production application serving real users with features designed for scale, security, and performance.
+
+---
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              FinSight AI Architecture                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   ┌──────────────┐     ┌──────────────┐     ┌──────────────┐             │
+│   │   Frontend   │────▶│   Flask API   │────▶│   MongoDB     │             │
+│   │  (Next.js)   │     │  (Gunicorn)   │     │  (Database)   │             │
+│   │              │     │              │     │               │             │
+│   │ https://     │     │ https://     │     │               │             │
+│   │ finsight     │     │ api.finsight │     │               │             │
+│   │ finance.me   │     │ finance.me   │     │               │             │
+│   └──────────────┘     └──────┬───────┘     └──────────────┘             │
+│                               │                                              │
+│                               ▼                                              │
+│                        ┌──────────────┐                                    │
+│                        │    Redis     │                                    │
+│                        │  (Celery +   │                                    │
+│                        │   Cache)     │                                    │
+│                        └──────┬───────┘                                    │
+│                               │                                              │
+│                               ▼                                              │
+│                        ┌──────────────┐       ┌──────────────┐           │
+│                        │  Celery       │────▶  │  Gemini AI   │           │
+│                        │  Workers      │       │  (LLM)       │           │
+│                        │  (Async)      │       │              │           │
+│                        └──────────────┘       └──────────────┘           │
+│                                                                             │
+│   ┌────────────────────────────────────────────────────────────────────┐   │
+│   │                        SendGrid Email Service                       │   │
+│   └────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Request Flow
+
+1. User interacts with Next.js frontend
+2. Frontend sends authenticated requests to Flask API
+3. API validates JWT tokens and processes requests
+4. For AI tasks: request is queued to Celery via Redis
+5. Celery workers process AI tasks asynchronously
+6. Gemini AI processes natural language or generates insights
+7. Results are stored in MongoDB
+8. Frontend polls for results or receives real-time updates
+
+---
+
+## Tech Stack
+
+| Category | Technology | Version | Purpose |
+|----------|------------|---------|---------|
+| **Runtime** | Python | 3.11+ | Backend runtime environment |
+| **Framework** | Flask | 3.1.2 | REST API framework |
+| **Database** | MongoDB | Latest | NoSQL document database |
+| **Cache/Message Broker** | Redis | Latest | Celery broker & token blacklist |
+| **Task Queue** | Celery | 5.5.3 | Async AI processing |
+| **AI/ML** | Google Gemini | 2.5-flash | Expense parsing & insights |
+| **Authentication** | JWT | PyJWT 2.10.1 | Secure token-based auth |
+| **Email** | SendGrid | 6.12.5 | Transactional emails |
+| **API Docs** | Flasgger | 0.9.7.1 | Swagger documentation |
+| **Deployment** | Docker | Latest | Containerization |
+| **Process Manager** | Gunicorn | 23.0.0 | WSGI application server |
+| **Testing** | Pytest | 8.4.2 | Unit & integration tests |
+
+---
+
+## Project Structure
+
+```
+finsight_ai_backend/
+├── app/
+│   ├── __init__.py              # Flask app factory, extensions, blueprints
+│   ├── celery_utils.py          # Celery configuration
+│   ├── config.py                # Environment-based configuration
+│   ├── email_sendgrid.py       # SendGrid email service wrapper
+│   ├── utils.py                # Shared utilities & helpers
+│   │
+│   ├── auth/
+│   │   ├── __init__.py
+│   │   ├── routes.py           # Auth endpoints (register, login, logout, refresh)
+│   │   └── schemas.py          # Pydantic validation schemas
+│   │
+│   ├── transactions/
+│   │   ├── __init__.py
+│   │   ├── routes.py           # CRUD operations, filtering, pagination
+│   │   ├── schemas.py          # Transaction validation schemas
+│   │   └── tasks.py            # Celery tasks for AI processing
+│   │
+│   ├── budgets/
+│   │   ├── __init__.py
+│   │   ├── routes.py           # Budget management endpoints
+│   │   └── schemas.py          # Budget validation schemas
+│   │
+│   ├── ai/
+│   │   ├── __init__.py
+│   │   └── routes.py           # AI summary endpoints
+│   │
+│   ├── models/
+│   │   ├── __init__.py
+│   │   ├── user.py             # User model & password hashing
+│   │   └── transaction.py     # Transaction model
+│   │
+│   ├── services/
+│   │   └── gemini_service.py   # Gemini AI integration
+│   │
+│   └── tasks/
+│       └── email_tasks.py      # Async email tasks
+│
+├── tests/
+│   ├── conftest.py             # Pytest fixtures
+│   ├── test_auth.py            # Authentication tests
+│   └── test_transactions.py    # Transaction tests
+│
+├── logs/                       # Application logs
+├── celery_worker.py            # Celery worker entry point
+├── config.py                   # Configuration file
+├── docker-compose.yml          # Multi-container orchestration
+├── Dockerfile                  # Backend container image
+├── pytest.ini                  # Pytest configuration
+├── requirements.txt            # Python dependencies
+└── run.py                     # Application entry point
+```
+
+---
+
+## Features
+
+### Authentication & Security
+- JWT-based authentication with access & refresh tokens
+- Token blacklisting for secure logout
+- Password strength validation (8+ chars, uppercase, number, special char)
+- Email normalization to prevent duplicates
+- Rate limiting on login endpoints
+- Generic error messages to prevent enumeration attacks
+
+### Transaction Management
+- Manual transaction entry with 12 predefined categories
+- AI-powered natural language expense parsing
+- Advanced filtering (category, amount range, date range)
+- Search by description
+- Pagination with configurable limits (max 100)
+- Transaction status tracking (processing/completed/failed)
+
+### AI-Powered Features
+
+#### Smart Expense Parsing
+Converts natural language to structured transactions:
+
+```
+Input:  "lunch with the team yesterday for 1500.50 rupees at the cafe"
+Output: {"amount": 1500.50, "category": "Food & Dining", "description": "Lunch with team at the cafe"}
+
+Input:  "uber ride to the airport for 750rs"
+Output: {"amount": 750.00, "category": "Transportation", "description": "Uber ride to the airport"}
+```
+
+#### Spending Insights
+AI-generated monthly summaries with actionable tips:
+- Identifies top spending categories
+- Provides personalized saving recommendations
+- Encouraging, non-judgmental tone
+
+#### Spam Prevention
+- Active task tracking per user
+- Prevents duplicate AI processing requests
+
+### Budget Management
+- Create monthly budgets by category
+- Real-time spending vs. budget tracking
+- Automatic aggregation of category spending
+- Visual progress indicators
+- Future budget validation (current + next month only)
+
+### Email Notifications
+- Password reset via SendGrid
+- Async email delivery with Celery
+- Branded HTML email templates
+
+### Health Monitoring
+- `/health` endpoint for container orchestration
+- Database and Redis connectivity checks
+
+---
+
+## API Endpoints
+
+### Authentication (`/api/auth`)
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| POST | `/register` | Create new account | No |
+| POST | `/login` | Authenticate user | No |
+| POST | `/logout` | Revoke tokens | Yes |
+| POST | `/refresh` | Get new access token | Yes (refresh) |
+| POST | `/forgot-password` | Request password reset | No |
+| POST | `/reset-password` | Reset password with token | No |
+| GET | `/profile` | Get user profile | Yes |
+| POST | `/profile` | Update income | Yes |
+
+### Transactions (`/api/transactions`)
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| POST | `/` | Add transaction (manual/AI) | Yes |
+| GET | `/` | List transactions (paginated, filtered) | Yes |
+| GET | `/summary` | Current month spending | Yes |
+| GET | `/history` | Daily spending history | Yes |
+| GET | `/categories` | List predefined categories | No |
+| GET | `/<id>` | Get single transaction | Yes |
+| DELETE | `/<id>` | Delete transaction | Yes |
+| GET | `/<id>/status` | Check AI processing status | Yes |
+
+### Budgets (`/api/budgets`)
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| POST | `/` | Create budget | Yes |
+| GET | `/` | Get current month budgets with spending | Yes |
+
+### AI (`/api/ai`)
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| POST | `/summary` | Trigger AI spending summary | Yes |
+| GET | `/summary/result/<task_id>` | Get summary result | Yes |
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- Python 3.11+
+- MongoDB (local or Atlas)
+- Redis
+- Google Gemini API key
+
+### Local Development Setup
+
+1. **Clone the repository**
+   ```bash
    cd finsight_ai_backend
+   ```
 
-2. Create a virtual environment and install dependencies
-   python -m venv .venv
-   source .venv/bin/activate  # macOS/Linux
-   .venv\Scripts\activate     # Windows
+2. **Create virtual environment**
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # Linux/Mac
+   # venv\Scripts\activate   # Windows
+   ```
+
+3. **Install dependencies**
+   ```bash
    pip install -r requirements.txt
+   ```
 
-3. Create .env (see Environment variables section below) and fill values.
+4. **Create environment variables**
+   Create a `.env` file:
+   ```env
+   MONGO_URI=mongodb://localhost:27017/finsight_db
+   JWT_SECRET_KEY=your-super-secret-key-at-least-32-characters
+   GEMINI_API_KEY=your-gemini-api-key
+   FRONTEND_URL=http://localhost:3000
+   BROKER_URL=redis://localhost:6379/0
+   RESULT_BACKEND=redis://localhost:6379/0
+   SENDGRID_API_KEY=your-sendgrid-api-key
+   FROM_EMAIL=noreply@yourdomain.com
+   ```
 
-4. Start Redis and MongoDB locally or configure connections to hosted instances.
+5. **Run the application**
+   ```bash
+   python run.py
+   ```
 
-5. Run the backend (dev server)
-   export FLASK_APP=app
-   export FLASK_ENV=development
-   flask run --host=0.0.0.0 --port=5000
+6. **Run Celery worker (separate terminal)**
+   ```bash
+   celery -A celery_worker.celery worker --loglevel=info -P solo
+   ```
 
-6. Start a Celery worker (in a separate terminal)
-   celery -A app.celery_app worker --loglevel=info
+7. **Access API**
+   - API: http://localhost:5000
+   - Swagger Docs: http://localhost:5000/api/docs
+   - Health Check: http://localhost:5000/health
 
-7. Optionally run scheduled beat tasks
-   celery -A app.celery_app beat --loglevel=info
+---
 
-Environment variables
----------------------
-Create a .env file in the project root with the variables below (example values shown). NEVER commit production secrets to source control.
+## Environment Variables
 
-- FLASK_ENV=development
-- FLASK_APP=app
-- FLASK_DEBUG=true
-- SECRET_KEY=super-secret-key
-- JWT_SECRET_KEY=jwt-secret-key
-- MONGO_URI=mongodb://localhost:27017/finsight
-- REDIS_URL=redis://localhost:6379/0
-- GEMINI_API_KEY=sk-...
-- RAILWAY_ENV=local_or_production
-- SENTRY_DSN= (optional; for error tracking)
-- CELERY_BROKER_URL=${REDIS_URL}
-- CELERY_RESULT_BACKEND=${REDIS_URL}
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `MONGO_URI` | Yes | MongoDB connection string |
+| `JWT_SECRET_KEY` | Yes | Secret key for JWT signing (min 32 chars) |
+| `GEMINI_API_KEY` | Yes | Google Gemini API key |
+| `FRONTEND_URL` | Yes | Frontend URL for CORS |
+| `BROKER_URL` | Yes | Redis connection for Celery |
+| `RESULT_BACKEND` | Yes | Redis connection for task results |
+| `SENDGRID_API_KEY` | No | SendGrid API key for emails |
+| `FROM_EMAIL` | No | Sender email address |
 
-Running (production)
---------------------
-- Use a WSGI server (Gunicorn / uvicorn for ASGI if using async extensions).
-- Example Gunicorn command:
-  gunicorn -w 4 -b 0.0.0.0:8000 app:app
-- Ensure environment variables are set in your production environment (Railway, Docker, or other).
-- Run Celery workers and beat processes separately in production.
+---
 
-Background tasks & Celery
--------------------------
-- Long-running and I/O-bound operations (Gemini API calls, batch imports, scheduled reconciliations) run as Celery tasks.
-- Redis is used as the broker and result backend.
-- Tasks are idempotent where practical and include retry/backoff policies for transient failures.
-- Celery setup files:
-  - app/celery_app.py (Celery factory & config)
-  - tasks/genai_tasks.py (Gemini interaction tasks)
-  - tasks/import_tasks.py (batch imports)
+## Docker Deployment
 
-Deployment & CI/CD
-------------------
-- We deploy via Railway with environment variables configured in the Railway project.
-- CI can run tests, linting, and build steps before deploying.
-- Typical pipeline:
-  - Run tests (pytest)
-  - Run linters (flake8, black)
-  - Build/update Docker image (if used)
-  - Deploy to Railway / other cloud providers
+### Quick Start with Docker Compose
 
-Observability & monitoring
---------------------------
-- Sentry integration available via SENTRY_DSN for error collection.
-- Structured logging (JSON format) is recommended for production logs.
-- Health endpoints:
-  - GET /health — basic service health
-  - GET /metrics — Prometheus metrics (if enabled)
-- Alerts & dashboards: connect logs/metrics to your monitoring stack (Datadog, Grafana, Railway integrations).
+```bash
+# Build and start all services
+docker-compose up -d
 
-Security best practices
------------------------
-- Keep GEMINI_API_KEY and other secrets in secure secret stores (Railway secrets, environment vault).
-- Use HTTPS in production for all endpoints.
-- Protect authentication endpoints with rate limiting.
-- Ensure minimal permissions for database users.
-- Validate and sanitize any user-supplied data before persistence or AI prompt construction.
-- Follow principle of least privilege for downstream APIs and accounts.
+# View logs
+docker-compose logs -f
 
-Testing
--------
-- Unit tests: pytest
-- Run tests:
-  pytest tests/
-- Aim to mock external APIs (Gemini, payment services) using vcrpy or unittest.mock for deterministic tests.
+# Stop services
+docker-compose down
+```
 
-Contributing
-------------
-We welcome contributions. Suggested workflow:
-1. Fork the repo.
-2. Create a feature branch: git checkout -b feat/my-feature
-3. Run tests and linters locally.
-4. Create a PR against main with an informative description and linked issue (if applicable).
+### Services Created
 
-Please follow these guidelines:
-- Write tests for new functionality.
-- Keep commits small and focused.
-- Document new env vars and endpoints.
+| Service | Port | Description |
+|---------|------|-------------|
+| mongo | 27017 | MongoDB database |
+| redis | 6379 | Redis cache & message broker |
+| backend | 5000 | Flask API server |
+| celery-worker | - | Async task processor |
 
-License
--------
-Specify your project license here (e.g., MIT). Replace this line with the exact license you intend to use.
+### Production Deployment
 
-Contact
--------
-- Maintainer: Pranav Chikte 
-- Product/Marketing: https://finsight-ai-frontend-2grh.vercel.app/
+```bash
+# Build production image
+docker build -t finsight-backend:latest .
 
-Acknowledgements
-----------------
-Built with open source tools and the Gemini API for GenAI capabilities.
+# Run with environment variables
+docker run -d \
+  --name finsight-backend \
+  -p 5000:5000 \
+  -e MONGO_URI=mongodb://mongo:27017/finsight_db \
+  -e BROKER_URL=redis://redis:6379/0 \
+  -e JWT_SECRET_KEY=your-secret \
+  -e GEMINI_API_KEY=your-key \
+  finsight-backend:latest
+```
 
-What's next / tips for maintainers
----------------------------------
-- Add an automated OpenAPI spec generator and host docs (Swagger UI).
-- Add more integration tests around Celery tasks and GenAI calling flows.
-- Monitor usage of the Gemini API and rate-limit or queue requests to avoid bill shock.
-- Add role-based access controls (RBAC) for multi-tenant or enterprise features.
+---
 
-Thank you — 
+## Testing
 
+```bash
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=app --cov-report=html
+
+# Run specific test file
+pytest tests/test_auth.py -v
+
+# Run tests in watch mode
+pytest -w
+```
+
+### Test Coverage
+
+- Authentication (register, login, logout, refresh)
+- Transaction CRUD operations
+- Input validation
+- Error handling
+
+---
+
+## Security Features
+
+### Implemented Security Measures
+
+1. **Password Security**
+   - Bcrypt hashing with salt
+   - Strength validation (8+ chars, uppercase, number, special)
+   - Generic error messages
+
+2. **Token Management**
+   - Short-lived access tokens (15 min)
+   - Long-lived refresh tokens (7 days)
+   - Token blacklisting for logout
+   - JTI (JWT ID) for tracking
+
+3. **API Security**
+   - CORS whitelisting (production domains)
+   - Input validation with Pydantic
+   - Rate limiting on auth endpoints
+   - SQL injection prevention (MongoDB queries)
+
+4. **Data Protection**
+   - Email enumeration prevention
+   - IDOR protection (ownership checks)
+   - Request timeout limits (30s)
+
+---
+
+## System Design
+
+### Database Schema
+
+#### Users Collection
+```json
+{
+  "_id": "ObjectId",
+  "email": "string (unique, lowercase)",
+  "password": "string (bcrypt hash)",
+  "income": "number",
+  "created_at": "datetime"
+}
+```
+
+#### Transactions Collection
+```json
+{
+  "_id": "ObjectId",
+  "user_id": "ObjectId",
+  "amount": "number",
+  "category": "string",
+  "description": "string",
+  "date": "datetime",
+  "status": "string (processing/completed/failed)",
+  "raw_text": "string (AI mode input)",
+  "failure_reason": "string (on failure)"
+}
+```
+
+#### Budgets Collection
+```json
+{
+  "_id": "ObjectId",
+  "user_id": "ObjectId",
+  "category": "string",
+  "limit": "number",
+  "month": "number",
+  "year": "number",
+  "created_at": "datetime"
+}
+```
+
+### Indexes
+
+```javascript
+db.users.createIndex("email", { unique: true })
+db.transactions.createIndex("user_id")
+db.transactions.createIndex("date")
+db.budgets.createIndex([("user_id", 1), ("month", 1), ("year", 1)])
+```
+
+---
+
+## Future Enhancements
+
+- [ ] Payment integration (Razorpay/Stripe)
+- [ ] Export transactions (CSV/PDF)
+- [ ] Recurring transactions
+- [ ] Investment tracking
+- [ ] Multi-currency support
+- [ ] Push notifications
+- [ ] Analytics dashboard API
+- [ ] WebSocket for real-time updates
+- [ ] Multi-language support
+- [ ] Export to accounting software
+
+---
+
+## License
+
+MIT License - See LICENSE file for details
+
+---
+
+## Contact
+
+**Project Link:** [https://www.finsightfinance.me](https://www.finsightfinance.me)
+
+**API Documentation:** [https://api.finsightfinance.me/api/docs](https://api.finsightfinance.me/api/docs)
+
+**Backend API:** [https://api.finsightfinance.me](https://api.finsightfinance.me)
+
+---
+
+## Acknowledgments
+
+- [Google Gemini AI](https://gemini.google.com/) for AI capabilities
+- [Flask](https://flask.palletsprojects.com/) community
+- [MongoDB](https://www.mongodb.com/) for database
+- [SendGrid](https://sendgrid.com/) for email delivery
+- [Vercel](https://vercel.com/) for frontend hosting
+
+---
+
+## Built With Love
+
+FinSight AI - Intelligent Expense Tracking for Everyone
+
+![Built with Flask](https://img.shields.io/badge/Built%20with-Flask-blue?style=flat)
+![Deployed on Railway](https://img.shields.io/badge/Deployed%20on-Railway-orange?style=flat)
