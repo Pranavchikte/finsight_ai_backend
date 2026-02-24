@@ -1,13 +1,16 @@
 from flask import Blueprint, request, current_app
 from flask_jwt_extended import create_access_token, create_refresh_token, jwt_required, get_jwt_identity, get_jwt
 from pydantic import ValidationError
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import redis
 from bson import ObjectId
-import re # ADDED: For password validation
+import re
+import random
+import string
 from app import mongo, bcrypt
 from app.tasks.email_tasks import send_email_task
 from app.models.user import User
+from app.services.twilio_service import twilio_service
 from .schemas import RegisterSchema, LoginSchema
 from app.utils import success_response, error_response, generate_reset_token, verify_reset_token
 
@@ -263,3 +266,144 @@ def profile():
         return success_response(user)
     else:
         return error_response("User not found", 404)
+
+
+@auth_bp.route('/send-whatsapp-code', methods=['POST'])
+@jwt_required()
+def send_whatsapp_code():
+    """
+    Send a WhatsApp verification code to the user's phone number.
+    User must be authenticated and provide their WhatsApp number.
+    Rate limited: max 3 codes per hour per user.
+    """
+    current_user_id = get_jwt_identity()
+    data = request.get_json()
+    
+    # Rate limiting: Check if user can request a new code
+    try:
+        redis_conn = redis.from_url(current_app.config['BROKER_URL'])
+        rate_limit_key = f"whatsapp_code_rate:{current_user_id}"
+        
+        # Check current request count
+        current_count = redis_conn.get(rate_limit_key)
+        if current_count and int(current_count) >= 3:
+            return error_response("Too many verification codes requested. Please try again in 1 hour.", 429)
+        
+        # Increment rate limit counter
+        pipe = redis_conn.pipeline()
+        pipe.incr(rate_limit_key)
+        pipe.expire(rate_limit_key, 3600)  # 1 hour expiry
+        pipe.execute()
+    except Exception as e:
+        current_app.logger.warning(f"Rate limit check failed: {e}")
+        # Continue without rate limiting if Redis fails
+    
+    whatsapp_number = data.get('whatsapp_number')
+    if not whatsapp_number:
+        return error_response("WhatsApp number is required.", 400)
+    
+    # Format the WhatsApp number
+    formatted_number = twilio_service.format_whatsapp_number(whatsapp_number)
+    if not formatted_number:
+        return error_response("Invalid phone number format.", 400)
+    
+    # Validate phone number format (Indian mobile)
+    if not re.match(r'^[6-9]\d{9}$', whatsapp_number):
+        return error_response("Please enter a valid 10-digit Indian mobile number.", 400)
+    
+    # Check if this number is already linked to another user
+    existing_user = mongo.db.users.find_one({
+        "whatsapp_number": whatsapp_number,
+        "whatsapp_verified": True,
+        "_id": {"$ne": ObjectId(current_user_id)}  # Exclude current user
+    })
+    if existing_user:
+        return error_response("This WhatsApp number is already linked to another account.", 400)
+    
+    # Generate verification code
+    code = ''.join(random.choices(string.digits, k=6))
+    expires_at = datetime.utcnow()
+    
+    # Store code in user document
+    try:
+        mongo.db.users.update_one(
+            {"_id": ObjectId(current_user_id)},
+            {
+                "$set": {
+                    "whatsapp_number": whatsapp_number,
+                    "whatsapp_code": code,
+                    "whatsapp_code_expires": expires_at + timedelta(minutes=10),
+                    "whatsapp_verified": False
+                }
+            }
+        )
+    except Exception as e:
+        current_app.logger.error(f"Error storing WhatsApp code: {e}")
+        return error_response("Failed to send verification code.", 500)
+    
+    # Send code via WhatsApp
+    message = f"🔐 Your FinSight AI verification code is: *{code}*\n\nThis code expires in 10 minutes.\n\nIf you didn't request this, please ignore."
+    
+    result = twilio_service.send_whatsapp_message(formatted_number, message)
+    
+    if result:
+        return success_response({"message": "Verification code sent to your WhatsApp.", "expires_in_minutes": 10})
+    else:
+        return error_response("Failed to send verification code. Please check the number and try again.", 500)
+
+
+@auth_bp.route('/verify-whatsapp', methods=['POST'])
+@jwt_required()
+def verify_whatsapp():
+    """
+    Verify the WhatsApp code entered by the user.
+    """
+    current_user_id = get_jwt_identity()
+    data = request.get_json()
+    
+    code = data.get('code', '').strip()
+    if not code:
+        return error_response("Verification code is required.", 400)
+    
+    if len(code) != 6 or not code.isdigit():
+        return error_response("Invalid code format. Please enter the 6-digit code.", 400)
+    
+    # Find user with this code
+    user = mongo.db.users.find_one({
+        "_id": ObjectId(current_user_id),
+        "whatsapp_code": code
+    })
+    
+    if not user:
+        return error_response("Invalid verification code.", 400)
+    
+    # Check if code is expired
+    if user.get('whatsapp_code_expires'):
+        expires_at = user['whatsapp_code_expires']
+        
+        # Handle both string and datetime from MongoDB
+        if isinstance(expires_at, str):
+            # Parse ISO format string
+            expires_at = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
+        
+        # Ensure we're comparing UTC times
+        if expires_at.tzinfo is None:
+            # Naive datetime - assume UTC
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        
+        if datetime.now(timezone.utc) > expires_at:
+            return error_response("Verification code has expired. Please request a new one.", 400)
+    
+    # Mark as verified and clear the code
+    mongo.db.users.update_one(
+        {"_id": ObjectId(current_user_id)},
+        {
+            "$set": {"whatsapp_verified": True},
+            "$unset": {"whatsapp_code": "", "whatsapp_code_expires": ""}
+        }
+    )
+    
+    return success_response({
+        "message": "WhatsApp successfully linked to your account!",
+        "whatsapp_verified": True
+    })
