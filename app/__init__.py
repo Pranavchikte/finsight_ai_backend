@@ -58,6 +58,7 @@ def create_app():
         from .transactions.routes import transactions_bp
         from .budgets.routes import budgets_bp 
         from .ai.routes import ai_bp
+        from .whatsapp.routes import whatsapp_bp
         
         # Configure CORS for all blueprints
         allowed_origins = [
@@ -69,12 +70,14 @@ def create_app():
         CORS(transactions_bp, origins=allowed_origins, supports_credentials=True)
         CORS(budgets_bp, origins=allowed_origins, supports_credentials=True)
         CORS(ai_bp, origins=allowed_origins, supports_credentials=True)
+        CORS(whatsapp_bp, origins=allowed_origins, supports_credentials=True)
         
         # Register blueprints
         app.register_blueprint(auth_bp, url_prefix='/api/auth')
         app.register_blueprint(transactions_bp, url_prefix='/api/transactions')
         app.register_blueprint(budgets_bp, url_prefix='/api/budgets')
         app.register_blueprint(ai_bp, url_prefix='/api/ai')
+        app.register_blueprint(whatsapp_bp)
         
         # Swagger API Documentation
         swagger_config = {
@@ -130,6 +133,9 @@ def create_app():
             mongo.db.transactions.create_index("user_id")
             mongo.db.transactions.create_index("date")
             mongo.db.budgets.create_index([("user_id", 1), ("month", 1), ("year", 1)])
+            # WhatsApp message deduplication
+            mongo.db.whatsapp_messages.create_index("message_sid", unique=True)
+            mongo.db.whatsapp_messages.create_index([("created_at", 1)], expireAfterSeconds=86400)  # Auto-delete after 24h
         except Exception as e:
             app.logger.error(f"Error creating MongoDB indexes: {e}")
             # Depending on severity, you might want to raise the error

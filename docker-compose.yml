@@ -42,6 +42,10 @@ services:
       - FRONTEND_URL=${FRONTEND_URL}
       - SENDGRID_API_KEY=${SENDGRID_API_KEY}
       - FROM_EMAIL=${FROM_EMAIL}
+      # Twilio WhatsApp
+      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID}
+      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN}
+      - TWILIO_PHONE_NUMBER=${TWILIO_PHONE_NUMBER}
     depends_on:
       - mongo
       - redis
@@ -63,6 +67,10 @@ services:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - SENDGRID_API_KEY=${SENDGRID_API_KEY}
       - FROM_EMAIL=${FROM_EMAIL}
+      # Twilio WhatsApp
+      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID}
+      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN}
+      - TWILIO_PHONE_NUMBER=${TWILIO_PHONE_NUMBER}
     depends_on:
       - mongo
       - redis
