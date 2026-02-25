@@ -19,47 +19,12 @@ CATEGORIES = [
 
 def parse_expense_message(message):
     """
-    Parse expense message using regex first, fallback to Gemini.
+    Parse expense message using Gemini AI.
     Examples: "500 coffee", "coffee for 500 rs", "lunch 150 rupees"
     """
-    message = message.strip().lower()
+    message = message.strip()
     
-    # Pattern 1: "amount description" or "description amount"
-    # Match patterns like: "500 coffee", "coffee 500", "500 rupees coffee"
-    
-    # Try regex first for simple patterns
-    patterns = [
-        r'^(\d+(?:\.\d{1,2})?)\s+(.+)$',  # 500 coffee
-        r'^(.+?)\s+(\d+(?:\.\d{1,2})?)$',  # coffee 500
-        r'^(\d+(?:\.\d{1,2})?)\s*(?:rs|rupees?)\s*(.+)$',  # 500 rs coffee
-        r'^(.+?)\s*(?:rs|rupees?)\s*(\d+(?:\.\d{1,2})?)$',  # coffee 500 rs
-    ]
-    
-    for pattern in patterns:
-        match = re.match(pattern, message)
-        if match:
-            groups = match.groups()
-            if groups[0].isdigit() or '.' in groups[0]:
-                amount = float(groups[0]) if groups[0].replace('.', '').isdigit() else float(groups[1])
-                description = groups[1] if isinstance(groups[0], (int, float)) else groups[0]
-            else:
-                amount = float(groups[1]) if groups[1].replace('.', '').isdigit() else float(groups[0])
-                description = groups[0] if isinstance(groups[1], (int, float)) else groups[1]
-            
-            # Clean description
-            description = description.strip().title()
-            
-            # Guess category based on keywords
-            category = guess_category(description)
-            
-            return {
-                "amount": round(amount, 2),
-                "description": description,
-                "category": category,
-                "source": "regex"
-            }
-    
-    # Fallback to Gemini AI
+    # Use Gemini AI for all parsing - it's smarter and more accurate
     try:
         result = parse_expense_test(message)
         if result:
@@ -73,16 +38,14 @@ def parse_expense_message(message):
             # Gemini returned null (couldn't parse)
             return {
                 "error": "could_not_parse",
-                "message": "Couldn't understand the expense. Try format: '500 coffee' or 'coffee for 500 rs'"
+                "message": "Couldn't understand the expense. Try format: '500 coffee' or 'coffee for 500 rupees'"
             }
     except Exception as e:
         current_app.logger.error(f"Gemini parsing failed: {e}")
         return {
             "error": "api_error",
-            "message": "AI service temporarily unavailable. Try simple format like '500 coffee'."
+            "message": "AI service temporarily unavailable. Please try again."
         }
-    
-    return None
 
 
 def guess_category(description):
