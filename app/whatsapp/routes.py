@@ -548,23 +548,60 @@ def whatsapp_webhook():
         current_app.logger.info(f"WhatsApp command from user {user_id}: {message_body}")
         
         # Command handling
-        if message_lower == '/help':
-            reply = "📖 *FinSight WhatsApp Commands:*\n\n"
-            reply += "💰 *Add Expense:*\n"
-            reply += "• *500 coffee* - Add expense\n"
-            reply += "• *coffee for 500 rs* - Add expense (AI)\n\n"
-            reply += "📊 *View Data:*\n"
-            reply += "• */transactions* - View recent\n"
-            reply += "• */budget* - View budget status\n"
-            reply += "• */summary* - Monthly summary\n"
-            reply += "• */compare* - vs last month\n\n"
-            reply += "✏️ *Manage:*\n"
-            reply += "• */delete <ID>* - Delete transaction\n"
-            reply += "• */edit <ID> amount 500* - Edit\n\n"
-            reply += "⚙️ *Settings:*\n"
-            reply += "• */weekly on/off* - Weekly summary\n"
-            reply += "• */alert on/off* - Budget alerts\n"
-            reply += "• */help* - Show this help"
+        if message_lower == '/start' or message_lower == '/guide':
+            reply = """Welcome to FinSight AI!
+
+Here's how to use WhatsApp bot:
+
+ADD EXPENSES:
+"coffee 50" - Quick add
+"lunch at cafe 200 rupees" - Natural language
+"uber ride 150" - Works great
+
+VIEW DATA:
+/transactions - Recent 5 expenses
+/budget - Budget status
+/summary - This month spending
+/compare - vs last month
+
+MANAGE:
+/delete <ID> - Remove expense
+/edit <ID> amount 500 - Edit
+
+SETTINGS:
+/weekly on - Enable weekly summary
+/weekly off - Disable
+/alert on - Budget alerts (80% warning)
+/alert off - Disable
+
+Need help? Type /help for all commands"""
+            
+        elif message_lower == '/help':
+            reply = """FinSight Commands Guide
+
+ADD EXPENSES:
+"500 coffee" - Add Rs.500
+"lunch 200 rupees" - Natural language
+"uber for 150" - Transportation
+
+VIEW DATA:
+/transactions - Last 5 expenses
+/budget - Budget status
+/summary - Monthly spending
+/compare - vs last month
+
+MANAGE:
+/delete <ID> - Delete transaction
+/edit <ID> amount 500 - Edit amount
+/edit <ID> category Food - Edit category
+
+SETTINGS:
+/weekly on - Enable weekly summary
+/weekly off - Disable
+/alert on - Budget alerts
+/alert off - Disable alerts
+
+/start - Show quick start guide"""
             
         elif message_lower == '/transactions':
             transactions = list(mongo.db.transactions.find(
@@ -641,16 +678,19 @@ def whatsapp_webhook():
                     # Send alert after a short delay
                     twilio_service.send_whatsapp_message(from_number, alert_reply)
                 
-                reply = "✅ *Expense Added!*\n\n"
-                reply += f"💰 Amount: ₹{expense['amount']:.2f}\n"
-                reply += f"📁 Category: {expense['category']}\n"
-                reply += f"📁 Description: {expense['description']}\n"
-                reply += f"\n(Sent via {expense['source']})"
+                reply = "Expense Added!\n\n"
+                reply += f"Amount: Rs.{expense['amount']:.2f}\n"
+                reply += f"Category: {expense['category']}\n"
+                reply += f"Description: {expense['description']}\n\n"
+                reply += f"(via {expense['source']})\n\n"
+                reply += "---Quick Tips---\n"
+                reply += "/transactions - View expenses\n"
+                reply += "/budget - Check budgets\n"
+                reply += "/start - Full guide"
             else:
-                reply = "❓ Sorry, I didn't understand that.\n\n"
-                reply += "Try:\n"
-                reply += "• '500 coffee' to add expense\n"
-                reply += "• /help for all commands"
+                reply = "Sorry, couldn't understand.\n\n"
+                reply += "Try: '500 coffee'\n"
+                reply += "Type /help for all commands"
         
         # Send reply
         twilio_service.send_whatsapp_message(from_number, reply)
