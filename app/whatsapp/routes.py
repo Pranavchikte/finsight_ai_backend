@@ -127,6 +127,7 @@ def format_transactions_list(transactions, limit=5):
         desc = t.get('description', 'No description')
         cat = t.get('category', 'Other')
         date = t.get('date')
+        trans_id = str(t.get('_id', ''))[:8]  # First 8 chars of ID
         
         if isinstance(date, datetime):
             date_str = date.strftime('%d %b')
@@ -134,10 +135,11 @@ def format_transactions_list(transactions, limit=5):
             date_str = 'N/A'
         
         lines.append(f"{i}. ₹{amount:.2f} - {desc}")
-        lines.append(f"   📁 {cat} | 📅 {date_str}\n")
+        lines.append(f"   📁 {cat} | 📅 {date_str} | ID: {trans_id}\n")
     
     total = sum(t.get('amount', 0) for t in transactions[:limit])
     lines.append(f"\n💰 Total (last {len(transactions[:limit])}): ₹{total:.2f}")
+    lines.append("\n💡 Use /delete <ID> to remove a transaction")
     
     return "\n".join(lines)
 
@@ -233,6 +235,275 @@ def format_summary(user_id):
     return "\n".join(lines)
 
 
+def handle_delete_command(user_id, message_body):
+    """Handle /delete <ID> command"""
+    parts = message_body.strip().split()
+    if len(parts) < 2:
+        return "❌ Usage: /delete <transaction_id>\n\nUse /transactions to see IDs."
+    
+    trans_id = parts[1].strip()
+    
+    # Try to find the transaction
+    try:
+        transaction = mongo.db.transactions.find_one({
+            "_id": ObjectId(trans_id),
+            "user_id": ObjectId(user_id)
+        })
+    except Exception:
+        return "❌ Invalid transaction ID.\n\nUse /transactions to see valid IDs."
+    
+    if not transaction:
+        return "❌ Transaction not found.\n\nUse /transactions to see valid IDs."
+    
+    amount = transaction.get('amount', 0)
+    desc = transaction.get('description', 'Unknown')
+    
+    # Delete the transaction
+    mongo.db.transactions.delete_one({"_id": ObjectId(trans_id)})
+    
+    return f"✅ Deleted: ₹{amount:.2f} - {desc}\n\nTransaction removed successfully."
+
+
+def handle_edit_command(user_id, message_body):
+    """Handle /edit <ID> amount/category/description <value> command"""
+    parts = message_body.strip().split()
+    if len(parts) < 4:
+        return "❌ Usage: /edit <ID> <field> <value>\n\nFields: amount, category, description\nExample: /edit abc123 amount 500"
+    
+    trans_id = parts[1].strip()
+    field = parts[2].lower()
+    value = ' '.join(parts[3:])
+    
+    # Validate field
+    if field not in ['amount', 'category', 'description']:
+        return "❌ Invalid field. Use: amount, category, or description"
+    
+    # Find transaction
+    try:
+        transaction = mongo.db.transactions.find_one({
+            "_id": ObjectId(trans_id),
+            "user_id": ObjectId(user_id)
+        })
+    except Exception:
+        return "❌ Invalid transaction ID."
+    
+    if not transaction:
+        return "❌ Transaction not found."
+    
+    # Build update
+    update = {}
+    if field == 'amount':
+        try:
+            new_amount = float(value)
+            if new_amount <= 0:
+                return "❌ Amount must be positive."
+            update['amount'] = new_amount
+        except ValueError:
+            return "❌ Invalid amount. Use a number."
+    elif field == 'category':
+        # Validate category
+        if value.title() not in CATEGORIES:
+            return f"❌ Invalid category. Use: {', '.join(CATEGORIES[:5])}..."
+        update['category'] = value.title()
+    elif field == 'description':
+        update['description'] = value
+    
+    # Update
+    mongo.db.transactions.update_one(
+        {"_id": ObjectId(trans_id)},
+        {"$set": update}
+    )
+    
+    return f"✅ Updated!\n\n{field.title()}: {value}"
+
+
+def handle_weekly_command(user_id, message_body):
+    """Handle /weekly on/off command"""
+    parts = message_body.strip().split()
+    if len(parts) < 2:
+        # Show current status
+        user = mongo.db.users.find_one({"_id": ObjectId(user_id)})
+        status = user.get('whatsapp_weekly', False)
+        return f"📊 Weekly Summary: {'✅ ON' if status else '❌ OFF'}\n\nUse /weekly on or /weekly off to change."
+    
+    action = parts[1].lower()
+    if action == 'on':
+        mongo.db.users.update_one(
+            {"_id": ObjectId(user_id)},
+            {"$set": {"whatsapp_weekly": True}}
+        )
+        return "✅ Weekly summary enabled!\n\nYou'll receive a spending summary every Sunday."
+    elif action == 'off':
+        mongo.db.users.update_one(
+            {"_id": ObjectId(user_id)},
+            {"$set": {"whatsapp_weekly": False}}
+        )
+        return "✅ Weekly summary disabled."
+    else:
+        return "❌ Use /weekly on or /weekly off"
+
+
+def handle_alert_command(user_id, message_body):
+    """Handle /alert on/off command"""
+    parts = message_body.strip().split()
+    if len(parts) < 2:
+        user = mongo.db.users.find_one({"_id": ObjectId(user_id)})
+        status = user.get('whatsapp_alerts', False)
+        return f"🔔 Budget Alerts: {'✅ ON' if status else '❌ OFF'}\n\nUse /alert on or /alert off to change."
+    
+    action = parts[1].lower()
+    if action == 'on':
+        mongo.db.users.update_one(
+            {"_id": ObjectId(user_id)},
+            {"$set": {"whatsapp_alerts": True}}
+        )
+        return "✅ Budget alerts enabled!\n\nYou'll be notified when you reach 80% of any budget."
+    elif action == 'off':
+        mongo.db.users.update_one(
+            {"_id": ObjectId(user_id)},
+            {"$set": {"whatsapp_alerts": False}}
+        )
+        return "✅ Budget alerts disabled."
+    else:
+        return "❌ Use /alert on or /alert off"
+
+
+def handle_compare_command(user_id):
+    """Handle /compare command - compare to last month"""
+    now = datetime.utcnow()
+    current_month = now.month
+    current_year = now.year
+    
+    # Get last month
+    if current_month == 1:
+        last_month = 12
+        last_year = current_year - 1
+    else:
+        last_month = current_month - 1
+        last_year = current_year
+    
+    # Current month spending
+    current_spending = list(mongo.db.transactions.aggregate([
+        {"$match": {
+            "user_id": ObjectId(user_id),
+            "date": {
+                "$gte": datetime(current_year, current_month, 1),
+                "$lt": datetime(current_year, current_month + 1, 1) if current_month < 12 else datetime(current_year + 1, 1, 1)
+            }
+        }},
+        {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
+    ]))
+    
+    current_total = current_spending[0]['total'] if current_spending else 0
+    
+    # Last month spending
+    last_spending = list(mongo.db.transactions.aggregate([
+        {"$match": {
+            "user_id": ObjectId(user_id),
+            "date": {
+                "$gte": datetime(last_year, last_month, 1),
+                "$lt": datetime(last_year, last_month + 1, 1) if last_month < 12 else datetime(last_year + 1, 1, 1)
+            }
+        }},
+        {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
+    ]))
+    
+    last_total = last_spending[0]['total'] if last_spending else 0
+    
+    if last_total == 0:
+        return "📊 No spending data from last month to compare."
+    
+    diff = current_total - last_total
+    pct = (diff / last_total) * 100
+    
+    month_name = now.strftime('%B')
+    last_month_name = datetime(last_year, last_month, 1).strftime('%B')
+    
+    lines = [f"📊 {month_name} vs {last_month_name}:\n"]
+    lines.append(f"• This month: ₹{current_total:.2f}")
+    lines.append(f"• Last month: ₹{last_total:.2f}\n")
+    
+    if diff > 0:
+        lines.append(f"🔴 You spent ₹{diff:.2f} MORE ({pct:.1f}% increase)")
+    elif diff < 0:
+        lines.append(f"🟢 You spent ₹{abs(diff):.2f} LESS ({abs(pct):.1f}% decrease)")
+    else:
+        lines.append("🟡 Spending is same as last month")
+    
+    return "\n".join(lines)
+
+
+def check_budget_alerts(user_id, category):
+    """Check if any budget exceeded 80% and send alert"""
+    # Check if user has alerts enabled
+    user = mongo.db.users.find_one({"_id": ObjectId(user_id)})
+    if not user or not user.get('whatsapp_alerts', False):
+        return None
+    
+    now = datetime.utcnow()
+    month = now.month
+    year = now.year
+    
+    # Get budget for this category
+    budget = mongo.db.budgets.find_one({
+        "user_id": ObjectId(user_id),
+        "category": category,
+        "month": month,
+        "year": year
+    })
+    
+    if not budget:
+        return None
+    
+    budget_limit = budget.get('limit', 0)
+    if budget_limit <= 0:
+        return None
+    
+    # Get current spending for this category
+    spending = list(mongo.db.transactions.aggregate([
+        {"$match": {
+            "user_id": ObjectId(user_id),
+            "category": category,
+            "date": {
+                "$gte": datetime(year, month, 1),
+                "$lt": datetime(year, month + 1, 1) if month < 12 else datetime(year + 1, 1, 1)
+            }
+        }},
+        {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
+    ]))
+    
+    current_spent = spending[0]['total'] if spending else 0
+    percentage = (current_spent / budget_limit) * 100
+    
+    # Check if crossed 80% threshold (and haven't already alerted today)
+    if percentage >= 80:
+        # Check if we already sent alert today
+        today_start = datetime(year, month, now.day)
+        existing_alert = mongo.db.whatsapp_alerts.find_one({
+            "user_id": ObjectId(user_id),
+            "category": category,
+            "created_at": {"$gte": today_start}
+        })
+        
+        if existing_alert:
+            return None  # Already alerted today
+        
+        # Store alert
+        mongo.db.whatsapp_alerts.insert_one({
+            "user_id": ObjectId(user_id),
+            "category": category,
+            "created_at": datetime.utcnow()
+        })
+        
+        emoji = "🟡" if percentage < 100 else "🔴"
+        return (f"⚠️ *Budget Alert!* \n\n"
+                f"{emoji} You've spent ₹{current_spent:.2f} / ₹{budget_limit:.2f} ({percentage:.0f}%) "
+                f"on {category}\n\n"
+                f"💡 Tip: You're approaching your budget limit!")
+    
+    return None
+
+
 @whatsapp_bp.route('/webhook/whatsapp', methods=['POST'])
 def whatsapp_webhook():
     """
@@ -294,11 +565,20 @@ def whatsapp_webhook():
         # Command handling
         if message_lower == '/help':
             reply = "📖 *FinSight WhatsApp Commands:*\n\n"
+            reply += "💰 *Add Expense:*\n"
             reply += "• *500 coffee* - Add expense\n"
-            reply += "• *coffee for 500 rs* - Add expense (AI)\n"
+            reply += "• *coffee for 500 rs* - Add expense (AI)\n\n"
+            reply += "📊 *View Data:*\n"
             reply += "• */transactions* - View recent\n"
             reply += "• */budget* - View budget status\n"
             reply += "• */summary* - Monthly summary\n"
+            reply += "• */compare* - vs last month\n\n"
+            reply += "✏️ *Manage:*\n"
+            reply += "• */delete <ID>* - Delete transaction\n"
+            reply += "• */edit <ID> amount 500* - Edit\n\n"
+            reply += "⚙️ *Settings:*\n"
+            reply += "• */weekly on/off* - Weekly summary\n"
+            reply += "• */alert on/off* - Budget alerts\n"
             reply += "• */help* - Show this help"
             
         elif message_lower == '/transactions':
@@ -312,6 +592,21 @@ def whatsapp_webhook():
             
         elif message_lower == '/summary':
             reply = format_summary(user_id)
+            
+        elif message_lower.startswith('/delete'):
+            reply = handle_delete_command(user_id, message_body)
+            
+        elif message_lower.startswith('/edit'):
+            reply = handle_edit_command(user_id, message_body)
+            
+        elif message_lower.startswith('/weekly'):
+            reply = handle_weekly_command(user_id, message_body)
+            
+        elif message_lower.startswith('/alert'):
+            reply = handle_alert_command(user_id, message_body)
+            
+        elif message_lower == '/compare':
+            reply = handle_compare_command(user_id)
             
         else:
             # Try to parse as expense
@@ -354,6 +649,12 @@ def whatsapp_webhook():
                     "user_id": ObjectId(user_id),
                     "created_at": datetime.utcnow()
                 })
+                
+                # Check budget alerts
+                alert_reply = check_budget_alerts(user_id, expense['category'])
+                if alert_reply:
+                    # Send alert after a short delay
+                    twilio_service.send_whatsapp_message(from_number, alert_reply)
                 
                 reply = "✅ *Expense Added!*\n\n"
                 reply += f"💰 Amount: ₹{expense['amount']:.2f}\n"
@@ -437,3 +738,90 @@ def whatsapp_recent_transactions():
         })
     
     return {"whatsapp_transactions": result}, 200
+
+
+@whatsapp_bp.route('/cron/weekly-summary', methods=['POST'])
+def send_weekly_summaries():
+    """
+    Cron endpoint to send weekly summaries to all users with weekly enabled.
+    Should be triggered by a cron job (e.g., every Sunday at 6 PM).
+    """
+    # Verify cron secret (to prevent unauthorized calls)
+    cron_secret = request.headers.get('X-Cron-Secret', '')
+    expected_secret = current_app.config.get('CRON_SECRET', '')
+    
+    if expected_secret and cron_secret != expected_secret:
+        return {"error": "Unauthorized"}, 401
+    
+    # Get all users with weekly summary enabled
+    users = list(mongo.db.users.find({
+        "whatsapp_weekly": True,
+        "whatsapp_verified": True,
+        "whatsapp_number": {"$exists": True, "$ne": ""}
+    }))
+    
+    sent_count = 0
+    failed_count = 0
+    
+    for user in users:
+        try:
+            user_id = str(user['_id'])
+            whatsapp_number = user.get('whatsapp_number')
+            
+            # Generate weekly summary
+            summary = generate_weekly_summary(user_id)
+            
+            if summary:
+                formatted_number = twilio_service.format_whatsapp_number(whatsapp_number)
+                if formatted_number:
+                    twilio_service.send_whatsapp_message(formatted_number, summary)
+                    sent_count += 1
+        except Exception as e:
+            current_app.logger.error(f"Failed to send weekly summary: {e}")
+            failed_count += 1
+    
+    return {
+        "message": f"Weekly summaries sent: {sent_count} success, {failed_count} failed",
+        "sent": sent_count,
+        "failed": failed_count
+    }, 200
+
+
+def generate_weekly_summary(user_id):
+    """Generate weekly summary message for a user."""
+    from datetime import timedelta
+    
+    now = datetime.utcnow()
+    week_ago = now - timedelta(days=7)
+    
+    # Get transactions from last 7 days
+    transactions = list(mongo.db.transactions.find({
+        "user_id": ObjectId(user_id),
+        "date": {"$gte": week_ago}
+    }))
+    
+    if not transactions:
+        return None
+    
+    total = sum(t.get('amount', 0) for t in transactions)
+    
+    # Category breakdown
+    categories = {}
+    for t in transactions:
+        cat = t.get('category', 'Other')
+        categories[cat] = categories.get(cat, 0) + t.get('amount', 0)
+    
+    lines = ["📊 *Your Weekly Summary*\n"]
+    lines.append(f"💰 Total spent: ₹{total:.2f}")
+    lines.append(f"📝 Transactions: {len(transactions)}\n")
+    
+    # Top categories
+    sorted_cats = sorted(categories.items(), key=lambda x: x[1], reverse=True)[:3]
+    lines.append("🏆 Top categories:")
+    for cat, amt in sorted_cats:
+        pct = (amt / total * 100) if total > 0 else 0
+        lines.append(f"   • {cat}: ₹{amt:.2f} ({pct:.0f}%)")
+    
+    lines.append("\n💡 Use /summary for full month details")
+    
+    return "\n".join(lines)
