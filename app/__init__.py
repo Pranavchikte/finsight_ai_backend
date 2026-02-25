@@ -136,6 +136,8 @@ def create_app():
             # WhatsApp message deduplication
             mongo.db.whatsapp_messages.create_index("message_sid", unique=True)
             mongo.db.whatsapp_messages.create_index([("created_at", 1)], expireAfterSeconds=86400)  # Auto-delete after 24h
+            # WhatsApp budget alerts
+            mongo.db.whatsapp_alerts.create_index([("user_id", 1), ("category", 1), ("created_at", 1)])
         except Exception as e:
             app.logger.error(f"Error creating MongoDB indexes: {e}")
             # Depending on severity, you might want to raise the error

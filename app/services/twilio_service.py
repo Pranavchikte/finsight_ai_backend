@@ -139,8 +139,8 @@ class TwilioService:
         if clean_number[0] not in '6789':
             return None
         
-        # Format with country code
-        return f"whatsapp:+{clean_number}"
+        # Format with country code (+91 for India)
+        return f"whatsapp:+91{clean_number}"
 
     def validate_phone_number(self, phone_number):
         """
