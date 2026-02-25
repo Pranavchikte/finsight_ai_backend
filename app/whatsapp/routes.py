@@ -107,11 +107,28 @@ def guess_category(description):
 
 
 def get_user_by_whatsapp(whatsapp_number):
-    """Find user by verified WhatsApp number."""
+    """Find user by verified WhatsApp number.
+    
+    Handles both formats:
+    - Stored in DB: 7058099532 (without +91)
+    - From WhatsApp: +917058099532 (with +91)
+    """
+    # Remove +91 or + from the number for comparison
+    clean_number = whatsapp_number.replace('+91', '').replace('+', '')
+    
+    # Try exact match first
     user = mongo.db.users.find_one({
-        "whatsapp_number": whatsapp_number,
+        "whatsapp_number": clean_number,
         "whatsapp_verified": True
     })
+    
+    # If not found, try with +91 prefix
+    if not user:
+        user = mongo.db.users.find_one({
+            "whatsapp_number": '+91' + clean_number,
+            "whatsapp_verified": True
+        })
+    
     return user
 
 
